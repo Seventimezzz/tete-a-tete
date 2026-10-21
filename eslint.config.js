@@ -14,6 +14,8 @@ export default defineConfig(
       'server/',
       '.claude/',
       'docs/',
+      '.superpowers/',
+      '**/.angular/',
     ],
   },
   js.configs.recommended,
@@ -28,9 +30,14 @@ export default defineConfig(
     },
   },
   {
-    files: ['**/*.js'],
+    files: ['**/*.{js,mjs,cjs}'],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: { globals: globals.node },
+  },
+  {
+    files: ['**/*.cjs'],
+    languageOptions: { sourceType: 'commonjs' },
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
   },
   prettier,
 );
