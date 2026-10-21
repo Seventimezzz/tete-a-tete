@@ -1,0 +1,56 @@
+[project]
+name = "tete-a-tete-server"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "fastapi>=0.156.7",
+    "pydantic>=2",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "PT", "RUF", "S", "ASYNC", "T20", "TID"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"time.time".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
+"time.monotonic".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
+"datetime.datetime.now".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
+"datetime.datetime.utcnow".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
+"datetime.date.today".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["app", "tests"]
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = ["--strict-markers", "--strict-config", "--import-mode=importlib", "-ra"]
+xfail_strict = true
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.17.1",
+]
