@@ -122,6 +122,32 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 - **Клиент и сайт, из корня:** `npm run dev:client` (`ng serve` и Electron вместе), `npm test`, `npm run lint`, `npm run typecheck`.
 - **Протокол, из корня:** `npm run gen:protocol` — выгрузить JSON Schema из Pydantic и сгенерировать типы и zod-схемы клиента.
 
+## Оркестрация
+
+Процесс берётся из [superpowers](https://github.com/obra/superpowers), знания по языкам и проверки безопасности — из плагинов [wshobson/agents](https://github.com/wshobson/agents), правила проекта — из агентов и скиллов в `.claude/`.
+
+Работа начинается со скилла `/stage N` (весь этап) или `/stage N.M` (один пункт): спецификация (`brainstorming`) → ветка → план (`writing-plans`) → исполнение субагентами с ревью каждой задачи (`subagent-driven-development`) → проверка поведения (`qa-engineer`) → финальное ревью → `/verify` → `[x]` в плане → завершение ветки. Спецификации и планы лежат в `docs/superpowers/`.
+
+**Маршрутизация.** Шаблоны superpowers запускают исполнителя как `general-purpose`. В этом проекте исполнитель задачи — агент её зоны, задача на две зоны делится на две задачи.
+
+| Зона | Агент |
+| --- | --- |
+| `server/`, модели протокола | `server-engineer` |
+| `client/renderer/src/app/core/` | `webrtc-engineer` |
+| `client/src/main/`, `client/src/preload/`, сборка и установщик | `electron-engineer` |
+| Остальной `client/renderer/`, `site/` | `ui-engineer` |
+| `deploy/`, `server/Dockerfile`, `.github/workflows/` | `infra-engineer` |
+
+**Проверка поведения.** `qa-engineer` работает после всех задач плана, до финального ревью. Он пишет собственные тесты на граничные, негативные, временные и гоночные случаи и на приватность и прогоняет сценарии «Готово, когда». Рабочий код он не правит. Каждая найденная ошибка закрепляется тестом с пометкой `xfail(strict=True)` или `test.fails` и исправляется агентом зоны.
+
+**Ревью.** `invariants-reviewer` только читает и ищет нарушения ключевых решений, приватности, протокола и констант. Он участвует в финальном ревью каждой ветки и в ревью задач, которые трогают логи, статистику, протокол, IP или безопасность окна. Для работы с поверхностью атаки до плана запускается `security-scanning:threat-modeling-expert`, а в финальное ревью добавляется `comprehensive-review:comprehensive-review-security-auditor`.
+
+**Скиллы проекта:** `stage`, `verify`, `protocol-change`, `webrtc-call-engine` (загружается в `webrtc-engineer`).
+
+**Плагины** перечислены в `.claude/settings.json`: superpowers и из wshobson — python-development, javascript-typescript, security-scanning, backend-api-security, frontend-mobile-security, comprehensive-review, cicd-automation. Плагины wshobson со своим процессом разработки (tdd-workflows, full-stack-orchestration, agent-teams, conductor) не подключаются: они конкурируют с superpowers. Установка из Git Bash: `bash .claude/install-plugins.sh`. В PowerShell `bash` запускает WSL, поэтому там так: `& (Join-Path (Split-Path (Split-Path (Get-Command git).Source)) 'bin\bash.exe') .claude/install-plugins.sh`. После установки перезапустите Claude Code.
+
+**Хуки.** Ручная правка `protocol/schema.json` и `client/src/protocol.gen.ts` блокируется. Флаги `--no-verify` и `--no-gpg-sign` блокируются (правило из block-no-verify в wshobson).
+
 ## План разработки
 
 Каждый этап заканчивается проверяемым результатом. Выполненное отмечается `[x]`.

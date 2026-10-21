@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest*)",
+      "Bash(uv run ruff*)",
+      "Bash(uv run mypy*)",
+      "Bash(npm test*)",
+      "Bash(npm run lint*)",
+      "Bash(npm run typecheck*)",
+      "Bash(npm run gen:protocol*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git rev-parse*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-generated.sh\"",
+            "shell": "bash"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if grep -qE '\"command\"[[:space:]]*:[[:space:]]*\"([^\"\\\\]|\\\\.)*(--no-(ver|g)|commit([^\"\\\\]|\\\\.)*([[:space:]]|\\\\[tn])-[a-zA-Z]*n)'; then echo 'BLOCKED: --no-verify и --no-gpg-sign запрещены. Исправьте причину, по которой не проходит git-хук, и закоммитьте без флагов обхода.' >&2; exit 2; fi",
+            "shell": "bash"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "superpowers@superpowers-marketplace": true,
+    "python-development@claude-code-workflows": true,
+    "javascript-typescript@claude-code-workflows": true,
+    "security-scanning@claude-code-workflows": true,
+    "backend-api-security@claude-code-workflows": true,
+    "frontend-mobile-security@claude-code-workflows": true,
+    "comprehensive-review@claude-code-workflows": true,
+    "cicd-automation@claude-code-workflows": true
+  },
+  "extraKnownMarketplaces": {
+    "superpowers-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers-marketplace"
+      }
+    },
+    "claude-code-workflows": {
+      "source": {
+        "source": "github",
+        "repo": "wshobson/agents"
+      }
+    }
+  }
+}
