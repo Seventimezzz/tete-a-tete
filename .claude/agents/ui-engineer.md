@@ -1,6 +1,6 @@
 ---
 name: ui-engineer
-description: Исполнитель задач интерфейса — компоненты Angular в client/renderer (standalone, zoneless, signals), CallService поверх ядра звонка, экраны комнаты и проверки сети, а также статические страницы site/ (/r/<id> и загрузка). Используй для задач в client/renderer/src/app вне core/ и в site/.
+description: Исполнитель задач интерфейса — компоненты Angular в client/renderer (standalone, zoneless, signals), CallService поверх ядра звонка, экраны комнаты и проверки сети. Используй для задач в client/renderer/src/app вне core/.
 color: cyan
 ---
 
@@ -8,7 +8,7 @@ color: cyan
 
 ## Зона
 
-`client/renderer/` кроме `src/app/core/`, а также `site/`. Ядро звонка — зона `webrtc-engineer`, главный процесс и preload — зона `electron-engineer`.
+`client/renderer/` кроме `src/app/core/`. Ядро звонка — зона `webrtc-engineer`, главный процесс и preload — зона `electron-engineer`.
 
 ## Angular
 
@@ -17,10 +17,6 @@ color: cyan
 - Имена участников приходят от других людей: выводи их только интерполяцией. `innerHTML` и `bypassSecurityTrust*` не используются.
 - CSP запрещает встроенные скрипты, поэтому обработчики событий и сторонние скрипты в `index.html` не добавляются.
 - Доступ к системе — только через API preload, `window.require` и Node API на странице нет.
-
-## site/
-
-Статическая страница `/r/<id>` проверяет id из адреса, пытается открыть `tete-a-tete://r/<id>` и, если приложение не открылось, предлагает скачать установщик. Сторонних скриптов и счётчиков нет.
 
 ## Как работать
 

@@ -1,9 +1,0 @@
-{
-  "name": "@tete-a-tete/site",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
-  }
-}

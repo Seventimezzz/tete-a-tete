@@ -10,7 +10,7 @@ Tete-a-tete — голосовые комнаты до 5 человек для �
 
 - **Только P2P.** Голос никогда не идёт через сервер: нет TURN, SFU, MCU. Если пара не соединилась напрямую, голос пересылает третий участник комнаты.
 - **Mesh, до 5 участников, только голос** (Opus). Видео и текстового чата нет.
-- **Клиент — только приложение Electron + Angular для Windows 11.** Браузерного клиента нет. Пользователи сидят за домашним роутером; мобильные сети и другие ОС не поддерживаются.
+- **Клиент — только приложение Electron + Angular для Windows 11.** Браузерного клиента и веб-сайта нет: сервер раздаёт только установщик и файлы обновлений. Пользователи сидят за домашним роутером; мобильные сети и другие ОС не поддерживаются.
 - **Бэкенд — Python и FastAPI**, один процесс uvicorn.
 - **Доступ по ссылке** со случайным id комнаты: не короче 10 символов, из криптостойкого генератора. Нет аккаунтов, владельца комнаты, `kick` и `lock`.
 - **Сервер хранит всё в памяти.** На диск попадает только обезличенная статистика соединений: раз в сутки в `stats/YYYY-MM.jsonl` на отдельном томе, независимо от логов. Служебные логи ротируются и не содержат IP из нашего кода.
@@ -21,12 +21,12 @@ Tete-a-tete — голосовые комнаты до 5 человек для �
 
 | Компонент | Где | Что делает |
 | --- | --- | --- |
-| Caddy | VPS, `80/tcp`, `443/tcp` | HTTPS и Let's Encrypt, проксирует `/ws`, раздаёт `site/` |
+| Caddy | VPS, `80/tcp`, `443/tcp` | HTTPS и Let's Encrypt, проксирует `/ws`, раздаёт установщик и файлы обновлений |
 | Сигналинг (FastAPI) | VPS, `127.0.0.1:8080` | Комнаты в памяти, пересылка `signal`, выбор ретранслятора, статистика |
 | STUN | тот же процесс, `3478/udp`, `3479/udp` | Отвечает клиенту его внешним IP и портом |
 | Клиент | ПК пользователя | Electron: WebRTC в Chromium, UPnP, правило брандмауэра, проверка сети, push-to-talk |
 
-Деплой — Docker Compose, оба контейнера в `network_mode: host`: STUN и Caddy должны видеть настоящие IP клиентов. В Caddyfile `/ws` обрабатывается в отдельном `handle` до `try_files`, иначе WebSocket-запрос перепишется в `/index.html`. Журнал запросов Caddy не включается, служебные логи Docker ротируются (3 файла по 10 МБ). Статистика лежит на отдельном томе `stats`, и ротация логов её не трогает.
+Деплой — Docker Compose, оба контейнера в `network_mode: host`: STUN и Caddy должны видеть настоящие IP клиентов. В Caddyfile `/ws` обрабатывается в отдельном `handle`, остальные пути — `file_server` для установщика и файлов обновлений из `./releases`. Журнал запросов Caddy не включается, служебные логи Docker ротируются (3 файла по 10 МБ). Статистика лежит на отдельном томе `stats`, и ротация логов её не трогает.
 
 Сигналинг запускается так:
 
@@ -49,7 +49,6 @@ client/     приложение Electron (TypeScript)
   renderer/         проект Angular CLI
     src/app/core/   звонок: сигналинг, WebRTC, ретрансляция, статистика — без Angular
     src/app/...     компоненты; CallService отдаёт состояние core через signals
-site/       страница /r/<id>, загрузка установщика, файлы обновлений
 deploy/     docker-compose.yml, Caddyfile
 ```
 
@@ -57,7 +56,7 @@ deploy/     docker-compose.yml, Caddyfile
 - **Сервер:** Python 3.13, FastAPI, uvicorn[standard], Pydantic v2, asyncio (STUN на `DatagramProtocol`), `maxminddb`. Инструменты: uv, ruff, mypy (strict), pytest, pytest-asyncio.
 - **Клиент:** TypeScript (strict), Electron, Angular (standalone-компоненты, signals, без zone.js), Angular CLI для страницы, esbuild для main и preload, electron-builder (NSIS), electron-updater, zod, vitest.
 - **Версии инструментов:** TypeScript закреплён на `~6.0.3`: Angular 22 и typescript-eslint 8 требуют `<6.1`, TypeScript 7 не ставить. Node ≥ 24.15 (`engines`, `.nvmrc`).
-- **Сайт:** статическая страница `/r/<id>` и страница загрузки на TypeScript. Клиент и сайт — npm workspaces.
+- **Веб-сайта нет.** Корень репозитория — npm workspaces с одним пакетом `client`.
 
 ## Протокол сигналинга
 
@@ -120,7 +119,7 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 
 Установка: `uv sync` из `server/`, `npm ci` из корня. `dev:client` появится на 4.1, `gen:protocol` — на 0.3, остальные команды работают.
 - **Сервер, из `server/`:** `uv run uvicorn app.main:app --reload`, `uv run pytest`, `uv run ruff check`, `uv run ruff format`, `uv run mypy`.
-- **Клиент и сайт, из корня:** `npm run dev:client` (`ng serve` и Electron вместе), `npm test`, `npm run lint` (ESLint и `prettier --check`), `npm run format`, `npm run typecheck`.
+- **Клиент, из корня:** `npm run dev:client` (`ng serve` и Electron вместе), `npm test`, `npm run lint` (ESLint и `prettier --check`), `npm run format`, `npm run typecheck`.
 - **Протокол, из корня:** `npm run gen:protocol` — выгрузить JSON Schema из Pydantic и сгенерировать типы и zod-схемы клиента.
 
 ## Оркестрация
@@ -136,7 +135,7 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 | `server/`, модели протокола | `server-engineer` |
 | `client/renderer/src/app/core/` | `webrtc-engineer` |
 | `client/src/main/`, `client/src/preload/`, сборка и установщик | `electron-engineer` |
-| Остальной `client/renderer/`, `site/` | `ui-engineer` |
+| Остальной `client/renderer/` | `ui-engineer` |
 | `deploy/`, `server/Dockerfile`, `.github/workflows/` | `infra-engineer` |
 
 **Проверка поведения.** `qa-engineer` работает после всех задач плана, до финального ревью. Он пишет собственные тесты на граничные, негативные, временные и гоночные случаи и на приватность и прогоняет сценарии «Готово, когда». Рабочий код он не правит. Каждая найденная ошибка закрепляется тестом с пометкой `xfail(strict=True)` или `test.fails` и исправляется агентом зоны.
@@ -155,7 +154,7 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 
 ### Этап 0. Репозиторий и общий протокол
 
-- [x] 0.1 Сервер: проект uv в `server/` (Python 3.13, FastAPI, uvicorn[standard], Pydantic v2), ruff, mypy strict, pytest. Клиент и сайт: npm workspaces `client` и `site`, TypeScript strict, ESLint, Prettier, vitest.
+- [x] 0.1 Сервер: проект uv в `server/` (Python 3.13, FastAPI, uvicorn[standard], Pydantic v2), ruff, mypy strict, pytest. Клиент: npm workspace `client`, TypeScript strict, ESLint, Prettier, vitest.
 - [ ] 0.2 `server/app/protocol.py`: Pydantic-модели всех сообщений с camelCase в JSON, генератор id комнаты.
 - [ ] 0.3 Генерация протокола: `protocol/schema.json` из Pydantic, из него — TypeScript-типы и zod-схемы в `client/src/protocol.gen.ts`. Скрипт `gen:protocol`. Сгенерированные файлы пишутся с LF и не должны падать на `npm run lint`: исключить их из Prettier и ESLint или прогонять Prettier в генераторе. Скрипт генератора на TypeScript должен входить в `include` какого-нибудь tsconfig.
 - [ ] 0.4 CI: ruff, mypy и pytest для сервера; lint, typecheck и vitest для клиента; проверка, что сгенерированный протокол актуален (`gen:protocol`, затем `git diff --exit-code`).
@@ -258,17 +257,17 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 
 - [ ] 10.1 Push-to-talk через `uiohook-napi` (нажатие и отпускание), настройка клавиши.
 - [ ] 10.2 Трей: закрытие окна сворачивает приложение, выход — через меню трея. Автозапуск — по желанию пользователя.
-- [ ] 10.3 Ссылки: `app.setAsDefaultProtocolClient('tete-a-tete')`, один экземпляр приложения (`requestSingleInstanceLock`), страница `/r/<id>` в `site/`.
+- [ ] 10.3 Ссылки: `app.setAsDefaultProtocolClient('tete-a-tete')`, один экземпляр приложения (`requestSingleInstanceLock`). Поле «Войти» принимает и id, и ссылку `tete-a-tete://r/<id>` целиком — для мессенджеров, где такая ссылка не кликабельна.
 - [ ] 10.4 Задержка и потери по каждому участнику из `getStats()`.
 
-Готово, когда: можно говорить по push-to-talk, не выходя из игры, а ссылка из мессенджера открывает комнату в приложении.
+Готово, когда: можно говорить по push-to-talk, не выходя из игры, а ссылка `tete-a-tete://r/<id>` из мессенджера открывает комнату в приложении.
 
 ### Этап 11. Дистрибуция
 
 - [ ] 11.1 Установщик NSIS через electron-builder. Установка с правами администратора — ради правила брандмауэра.
 - [ ] 11.2 Подпись установщика и приложения сертификатом из 0.5.
 - [ ] 11.3 Автообновление через electron-updater с нашего сервера.
-- [ ] 11.4 `site/`: страница загрузки.
+- [ ] 11.4 Раздача установщика и файлов обновлений: Caddy отдаёт их из `./releases` на VPS, установщик — по прямой ссылке.
 
 Готово, когда: подписанный установщик ставится, а приложение обновляется само.
 
@@ -284,3 +283,4 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 - Нужны ли пароли на комнаты.
 - Выходить ли автоматически, если человек один в комнате 30 минут.
 - Библиотека UPnP (решается на 7.2).
+- Как звать друзей в комнату из мессенджеров, где ссылка `tete-a-tete://r/<id>` не кликабельна. Сейчас её или id вставляют в поле «Войти»; веб-страницы-переходника нет.

@@ -21,7 +21,7 @@ color: orange
 
 ## CI
 
-Задания: сервер (`uv sync`, `uv run ruff check`, `uv run ruff format --check`, `uv run mypy`, `uv run pytest`), клиент и сайт (`npm ci`, `npm run lint`, `npm run typecheck`, `npm test`), протокол (`npm run gen:protocol`, затем `git diff --exit-code`). Сборка установщика — на `windows-latest`. Версии actions закрепляй.
+Задания: сервер (`uv sync`, `uv run ruff check`, `uv run ruff format --check`, `uv run mypy`, `uv run pytest`), клиент (`npm ci`, `npm run lint`, `npm run typecheck`, `npm test`), протокол (`npm run gen:protocol`, затем `git diff --exit-code`). Сборка установщика — на `windows-latest`. Версии actions закрепляй.
 
 ## Как работать
 
