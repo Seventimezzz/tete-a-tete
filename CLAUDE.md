@@ -56,6 +56,7 @@ deploy/     docker-compose.yml, Caddyfile
 Стек:
 - **Сервер:** Python 3.13, FastAPI, uvicorn[standard], Pydantic v2, asyncio (STUN на `DatagramProtocol`), `maxminddb`. Инструменты: uv, ruff, mypy (strict), pytest, pytest-asyncio.
 - **Клиент:** TypeScript (strict), Electron, Angular (standalone-компоненты, signals, без zone.js), Angular CLI для страницы, esbuild для main и preload, electron-builder (NSIS), electron-updater, zod, vitest.
+- **Версии инструментов:** TypeScript закреплён на `~6.0.3`: Angular 22 и typescript-eslint 8 требуют `<6.1`, TypeScript 7 не ставить. Node ≥ 24.15 (`engines`, `.nvmrc`).
 - **Сайт:** статическая страница `/r/<id>` и страница загрузки на TypeScript. Клиент и сайт — npm workspaces.
 
 ## Протокол сигналинга
@@ -117,9 +118,9 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 
 ## Команды
 
-Появятся на этапе 0. Договорённость:
+Установка: `uv sync` из `server/`, `npm ci` из корня. `dev:client` появится на 4.1, `gen:protocol` — на 0.3, остальные команды работают.
 - **Сервер, из `server/`:** `uv run uvicorn app.main:app --reload`, `uv run pytest`, `uv run ruff check`, `uv run ruff format`, `uv run mypy`.
-- **Клиент и сайт, из корня:** `npm run dev:client` (`ng serve` и Electron вместе), `npm test`, `npm run lint`, `npm run typecheck`.
+- **Клиент и сайт, из корня:** `npm run dev:client` (`ng serve` и Electron вместе), `npm test`, `npm run lint` (ESLint и `prettier --check`), `npm run format`, `npm run typecheck`.
 - **Протокол, из корня:** `npm run gen:protocol` — выгрузить JSON Schema из Pydantic и сгенерировать типы и zod-схемы клиента.
 
 ## Оркестрация
@@ -154,9 +155,9 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 
 ### Этап 0. Репозиторий и общий протокол
 
-- [ ] 0.1 Сервер: проект uv в `server/` (Python 3.13, FastAPI, uvicorn[standard], Pydantic v2), ruff, mypy strict, pytest. Клиент и сайт: npm workspaces `client` и `site`, TypeScript strict, ESLint, Prettier, vitest.
+- [x] 0.1 Сервер: проект uv в `server/` (Python 3.13, FastAPI, uvicorn[standard], Pydantic v2), ruff, mypy strict, pytest. Клиент и сайт: npm workspaces `client` и `site`, TypeScript strict, ESLint, Prettier, vitest.
 - [ ] 0.2 `server/app/protocol.py`: Pydantic-модели всех сообщений с camelCase в JSON, генератор id комнаты.
-- [ ] 0.3 Генерация протокола: `protocol/schema.json` из Pydantic, из него — TypeScript-типы и zod-схемы в `client/src/protocol.gen.ts`. Скрипт `gen:protocol`.
+- [ ] 0.3 Генерация протокола: `protocol/schema.json` из Pydantic, из него — TypeScript-типы и zod-схемы в `client/src/protocol.gen.ts`. Скрипт `gen:protocol`. Сгенерированные файлы пишутся с LF и не должны падать на `npm run lint`: исключить их из Prettier и ESLint или прогонять Prettier в генераторе. Скрипт генератора на TypeScript должен входить в `include` какого-нибудь tsconfig.
 - [ ] 0.4 CI: ruff, mypy и pytest для сервера; lint, typecheck и vitest для клиента; проверка, что сгенерированный протокол актуален (`gen:protocol`, затем `git diff --exit-code`).
 - [ ] 0.5 Заказать сертификат подписи кода: выпуск занимает время, а нужен он к этапу 11.
 
@@ -164,7 +165,7 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 
 ### Этап 1. Сервер сигналинга
 
-- [ ] 1.1 WebSocket-эндпоинт FastAPI `/ws`, uvicorn на `127.0.0.1:8080` с одним воркером и `--ws-max-size 65536`. Каждое сообщение — через Pydantic, ошибка — `bad-request`.
+- [ ] 1.1 WebSocket-эндпоинт FastAPI `/ws`, uvicorn на `127.0.0.1:8080` с одним воркером и `--ws-max-size 65536`. Каждое сообщение — через Pydantic, ошибка — `bad-request`. Внимание: uvicorn пишет IP клиента при каждом рукопожатии WebSocket (`"WebSocket /ws" [accepted]` и отказы) в логгер `uvicorn.error` на уровне INFO, и `--no-access-log` этого не убирает. Подавить и закрепить интеграционным тестом в 1.8.
 - [ ] 1.2 Комнаты в памяти: `create`; `join`, который создаёт комнату, если её нет; лимит 5 → `room-full`; `leave`; рассылка `peer-joined` и `peer-left`.
 - [ ] 1.3 Пересылка `signal` только внутри комнаты, `mute`.
 - [ ] 1.4 Heartbeat: WebSocket-ping средствами uvicorn (`--ws-ping-interval 15 --ws-ping-timeout 15`), ответ `pong` на `ping`.
@@ -196,7 +197,7 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 
 ### Этап 4. Клиент: первый звонок
 
-- [ ] 4.1 Каркас: Angular CLI для страницы (standalone, zoneless, signals), esbuild для main и preload, протокол `app://` для собранного приложения, `ng serve` + Electron в разработке.
+- [ ] 4.1 Каркас: Angular CLI для страницы (standalone, zoneless, signals), esbuild для main и preload, протокол `app://` для собранного приложения, `ng serve` + Electron в разработке. Preload в песочнице собирается в CommonJS (`.cjs`). `@types/node` — под версию Node в Electron. Каждый `*.ts`, включая конфиги сборки, входит в `include` какого-нибудь tsconfig, иначе ESLint падает.
 - [ ] 4.2 Клиент сигналинга на сгенерированных zod-схемах: подключение, `create` и `join`, обработка всех серверных сообщений.
 - [ ] 4.3 Микрофон, выбор устройств ввода и вывода.
 - [ ] 4.4 Соединение на каждую пару: offer от новичка, perfect negotiation, trickle ICE, буфер кандидатов.
