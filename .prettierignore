@@ -1,0 +1,5 @@
+*.md
+server/
+.claude/
+docs/
+package-lock.json

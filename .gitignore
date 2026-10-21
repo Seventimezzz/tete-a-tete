@@ -12,3 +12,10 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Node
+node_modules/
+dist/
+out/
+coverage/
+*.tsbuildinfo
