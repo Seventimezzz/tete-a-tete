@@ -27,6 +27,11 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "PT", "RUF", "S", "AS
 "datetime.datetime.now".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
 "datetime.datetime.utcnow".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
 "datetime.date.today".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
+"datetime.datetime.today".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
+"time.time_ns".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
+"time.monotonic_ns".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
+"time.perf_counter".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
+"time.perf_counter_ns".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
 
 [tool.mypy]
 python_version = "3.13"
@@ -43,6 +48,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = ["--strict-markers", "--strict-config", "--import-mode=importlib", "-ra"]
 xfail_strict = true
+filterwarnings = ["error"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

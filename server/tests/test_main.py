@@ -9,9 +9,3 @@ async def test_http_docs_are_not_served(path: str) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get(path)
     assert response.status_code == 404
-
-
-async def test_app_answers_over_asgi_in_async_test() -> None:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/openapi.json")
-    assert response.status_code == 404
