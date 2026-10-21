@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "client"
+    "client",
+    "site"
   ],
   "engines": {
     "node": ">=24.15"
