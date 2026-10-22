@@ -11,6 +11,7 @@
   "scripts": {
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
+    "gen:protocol": "uv run --directory server python -m app.protocol_schema ../protocol/schema.json && node client/scripts/gen-protocol.ts && prettier --write protocol/schema.json client/src/protocol.gen.ts",
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm run test --workspaces"
   },

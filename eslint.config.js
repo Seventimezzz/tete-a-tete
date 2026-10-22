@@ -16,6 +16,7 @@ export default defineConfig(
       'docs/',
       '.superpowers/',
       '**/.angular/',
+      'client/src/protocol.gen.ts',
     ],
   },
   js.configs.recommended,
