@@ -307,7 +307,7 @@
         "message": {
           "type": "join",
           "roomId": "abcdefghijkm",
-          "name": "ab",
+          "name": "a\u007fb",
           "net": {
             "nat": "cone",
             "upnp": true,
@@ -322,7 +322,7 @@
         "message": {
           "type": "join",
           "roomId": "abcdefghijkm",
-          "name": "ab",
+          "name": "a\u0085b",
           "net": {
             "nat": "cone",
             "upnp": true,
