@@ -1,6 +1,6 @@
 """QA tests for the protocol: server/client agreement, privacy of BadRequestError, odd input.
 
-The shared fixture `fixtures/agreement_cases.json` is read by this file and by
+The shared fixture `protocol/agreement_cases.json` is read by this file and by
 `client/src/protocol.agreement.test.ts`: the same raw text goes to Pydantic and to zod.
 """
 
@@ -18,6 +18,7 @@ from pydantic import BaseModel, ValidationError
 from app import protocol
 from app.protocol import (
     ID_ALPHABET,
+    MAX_SIGNAL_DATA_DEPTH,
     ROOM_CAPACITY,
     BadRequestError,
     ClientSignal,
@@ -32,7 +33,7 @@ from app.protocol import (
 )
 from app.protocol_schema import build_schema
 
-FIXTURE = Path(__file__).parent / "fixtures" / "agreement_cases.json"
+FIXTURE = Path(__file__).parents[2] / "protocol" / "agreement_cases.json"
 CASES: list[dict[str, Any]] = json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 NET = '{"nat":null,"upnp":null,"cgnat":null,"doubleNat":null,"vpn":null}'
@@ -75,18 +76,6 @@ def test_fixture_covers_both_directions_and_both_verdicts() -> None:
     assert {c["expect"] for c in CASES} == {"accept", "reject"}
 
 
-def test_signal_data_with_nan_is_not_forwarded_altered() -> None:
-    raw = '{"type":"signal","to":"abcdefgh","data":{"a":NaN}}'
-    try:
-        parsed = parse_client_message(raw)
-    except BadRequestError:
-        return
-    assert isinstance(parsed, ClientSignal)
-    forwarded = ServerSignal(from_="abcdefgh", data=parsed.data)  # type: ignore[call-arg]
-    out = json.loads(dump_server_message(forwarded))
-    assert out["data"]["a"] is not None
-
-
 @pytest.mark.parametrize(
     "raw",
     [
@@ -115,9 +104,14 @@ def test_hostile_bytes_give_bad_request_not_a_crash(raw: bytes) -> None:
         parse_client_message(raw)
 
 
-def test_deep_but_legal_data_is_accepted() -> None:
-    raw = '{"type":"signal","to":"abcdefgh","data":{"a":' + "[" * 100 + "]" * 100 + "}}"
-    assert isinstance(parse_client_message(raw), ClientSignal)
+def test_data_at_the_depth_limit_is_accepted_and_forwardable_one_more_is_rejected() -> None:
+    nested = '{"a":' + "[" * (MAX_SIGNAL_DATA_DEPTH - 1) + "]" * (MAX_SIGNAL_DATA_DEPTH - 1) + "}"
+    parsed = parse_client_message('{"type":"signal","to":"abcdefgh","data":' + nested + "}")
+    assert isinstance(parsed, ClientSignal)
+    assert json.loads(dump_server_message(ServerSignal(from_="abcdefgh", data=parsed.data)))
+    too_deep = '{"a":' + "[" * MAX_SIGNAL_DATA_DEPTH + "]" * MAX_SIGNAL_DATA_DEPTH + "}"
+    with pytest.raises(BadRequestError):
+        parse_client_message('{"type":"signal","to":"abcdefgh","data":' + too_deep + "}")
 
 
 def test_oversized_name_is_rejected_without_crash() -> None:

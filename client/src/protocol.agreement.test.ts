@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import fixture from '../../server/tests/fixtures/agreement_cases.json' with { type: 'json' };
+import fixture from '../../protocol/agreement_cases.json' with { type: 'json' };
 import { ClientMessage, ServerMessage } from './protocol.gen';
 
 // The same raw text is checked by server/tests/test_protocol_qa.py with Pydantic.

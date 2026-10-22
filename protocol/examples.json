@@ -303,7 +303,7 @@
         }
       },
       {
-        "why": "name с управляющим ",
+        "why": "имя с DEL (U+007F)",
         "message": {
           "type": "join",
           "roomId": "abcdefghijkm",
@@ -318,7 +318,7 @@
         }
       },
       {
-        "why": "name с управляющим ",
+        "why": "имя с NEL (U+0085)",
         "message": {
           "type": "join",
           "roomId": "abcdefghijkm",

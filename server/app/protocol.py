@@ -1,6 +1,7 @@
 """Signaling protocol: the source of truth for protocol/schema.json and the client."""
 
 import math
+import re
 import secrets
 from typing import Annotated, Any, Final, Literal
 
@@ -23,9 +24,29 @@ NAME_MAX_LENGTH: Final = 32
 RESUME_TOKEN_MAX_LENGTH: Final = 128
 PAIR_MS_MAX: Final = 3_600_000
 PAIR_RESTARTS_MAX: Final = 100
+# `data` of a signal: the object itself is depth 1, each nested object or array adds 1.
+# Deeper data parses but cannot be serialized back for forwarding (about 98 levels).
+MAX_SIGNAL_DATA_DEPTH: Final = 32
+_DATA_TOO_DEEP: Final = "signal data is nested too deeply"
 
-# Character class of the id patterns; matches ID_ALPHABET.
-_ID_CLASS: Final = "[a-km-np-z2-9]"
+
+def _char_class(alphabet: str) -> str:
+    """Regex class for the alphabet: runs of consecutive code points become ranges."""
+    runs: list[str] = []
+    for char in alphabet:
+        if runs and ord(runs[-1][-1]) + 1 == ord(char):
+            runs[-1] += char
+        else:
+            runs.append(char)
+    parts = [
+        re.escape(run) if len(run) == 1 else f"{re.escape(run[0])}-{re.escape(run[-1])}"
+        for run in runs
+    ]
+    return "[" + "".join(parts) + "]"
+
+
+# Character class of the id patterns, built from ID_ALPHABET.
+_ID_CLASS: Final = _char_class(ID_ALPHABET)
 
 type RoomId = Annotated[str, Field(pattern=f"^{_ID_CLASS}{{{ROOM_ID_LENGTH}}}$")]
 type PeerId = Annotated[str, Field(pattern=f"^{_ID_CLASS}{{{PEER_ID_LENGTH}}}$")]
@@ -41,10 +62,6 @@ type PairResult = Literal["direct", "failed"]
 type IpFamily = Literal["ipv4", "ipv6"]
 type ErrorCode = Literal["room-full", "bad-request"]
 
-_CLIENT_CONFIG: Final = ConfigDict(
-    alias_generator=to_camel, populate_by_name=True, extra="forbid", strict=True
-)
-
 
 def _require_type(schema: dict[str, Any]) -> None:
     """Server messages default `type` in Python, but the schema must require it."""
@@ -56,38 +73,46 @@ def _require_type(schema: dict[str, Any]) -> None:
             required.insert(0, "type")
 
 
-_SERVER_CONFIG: Final = ConfigDict(
-    alias_generator=to_camel, populate_by_name=True, json_schema_extra=_require_type
-)
-
-
-def _reject_non_finite(data: dict[str, JsonValue]) -> dict[str, JsonValue]:
-    """NaN and Infinity are not JSON, and 1e400 overflows to inf; dumping them gives null.
+def _check_signal_data(data: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    """Limit nesting depth and reject NaN and Infinity (1e400 overflows to inf; dumping gives null).
 
     `allow_inf_nan=False` in the config does not reach inside JsonValue, so walk it.
+    Depth: `data` itself is 1, each nested object or array adds 1.
     """
-    stack: list[JsonValue] = [data]
+    stack: list[tuple[JsonValue, int]] = [(data, 1)]
     while stack:
-        item = stack.pop()
+        item, depth = stack.pop()
         if isinstance(item, float):
             if not math.isfinite(item):
                 raise ValueError("non-finite number")
-        elif isinstance(item, dict):
-            stack.extend(item.values())
-        elif isinstance(item, list):
-            stack.extend(item)
+        elif isinstance(item, dict | list):
+            if depth > MAX_SIGNAL_DATA_DEPTH:
+                raise ValueError(_DATA_TOO_DEEP)
+            children = item.values() if isinstance(item, dict) else item
+            stack.extend((child, depth + 1) for child in children)
     return data
 
 
-_SignalData = Annotated[dict[str, JsonValue], AfterValidator(_reject_non_finite)]
+_SignalData = Annotated[dict[str, JsonValue], AfterValidator(_check_signal_data)]
 
 
 class _ClientModel(BaseModel):
-    model_config = _CLIENT_CONFIG
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+        strict=True,
+        hide_input_in_errors=True,
+    )
 
 
 class _ServerModel(BaseModel):
-    model_config = _SERVER_CONFIG
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        json_schema_extra=_require_type,
+        hide_input_in_errors=True,
+    )
 
 
 class NetInfo(_ClientModel):
@@ -117,16 +142,16 @@ class ClientCreate(_ClientModel):
 
 class ClientJoin(_ClientModel):
     type: Literal["join"]
-    room_id: RoomId
+    room_id: RoomId = Field(repr=False)
     name: Name
     net: NetInfo
-    resume_token: ResumeToken | None = None
+    resume_token: ResumeToken | None = Field(default=None, repr=False)
 
 
 class ClientSignal(_ClientModel):
     type: Literal["signal"]
     to: PeerId
-    data: _SignalData
+    data: _SignalData = Field(repr=False)
 
 
 class ClientMute(_ClientModel):
@@ -155,10 +180,10 @@ class ClientLeave(_ClientModel):
 
 class ServerJoined(_ServerModel):
     type: Literal["joined"] = "joined"
-    room_id: RoomId
+    room_id: RoomId = Field(repr=False)
     self_id: PeerId
     resumed: bool
-    resume_token: ResumeToken
+    resume_token: ResumeToken = Field(repr=False)
     peers: Annotated[list[PeerInfo], Field(max_length=ROOM_CAPACITY - 1)]
 
 
@@ -176,7 +201,7 @@ class ServerPeerLeft(_ServerModel):
 class ServerSignal(_ServerModel):
     type: Literal["signal"] = "signal"
     from_: PeerId = Field(alias="from")
-    data: dict[str, JsonValue]
+    data: dict[str, JsonValue] = Field(repr=False)
 
 
 class ServerMute(_ServerModel):
@@ -223,8 +248,14 @@ type ServerMessage = Annotated[
     Field(discriminator="type"),
 ]
 
-client_message_adapter: Final[TypeAdapter[ClientMessage]] = TypeAdapter(ClientMessage)
-server_message_adapter: Final[TypeAdapter[ServerMessage]] = TypeAdapter(ServerMessage)
+# The union adapter has its own root config: the models' hide_input_in_errors is not enough.
+_ADAPTER_CONFIG: Final = ConfigDict(hide_input_in_errors=True)
+client_message_adapter: Final[TypeAdapter[ClientMessage]] = TypeAdapter(
+    ClientMessage, config=_ADAPTER_CONFIG
+)
+server_message_adapter: Final[TypeAdapter[ServerMessage]] = TypeAdapter(
+    ServerMessage, config=_ADAPTER_CONFIG
+)
 
 
 class BadRequestError(Exception):
