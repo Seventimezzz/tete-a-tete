@@ -20,6 +20,7 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "PT", "RUF", "S", "AS
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "TID251"]
+"app/clock.py" = ["TID251"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "time.time".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
