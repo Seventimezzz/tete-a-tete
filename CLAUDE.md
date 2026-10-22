@@ -42,8 +42,10 @@ uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
 
 ```
 server/     сигналинг + STUN: Python, FastAPI; проект uv (pyproject.toml)
-protocol/   schema.json — JSON Schema протокола, генерируется из Pydantic-моделей сервера
+protocol/   schema.json — JSON Schema протокола, генерируется из Pydantic-моделей сервера;
+            examples.json и agreement_cases.json — общие примеры, их проверяют и pytest, и vitest
 client/     приложение Electron (TypeScript)
+  scripts/          gen-protocol.ts — генератор zod-схем из schema.json
   src/main/         главный процесс: окно, трей, PTT, UPnP, брандмауэр, сон и выход, обновления
   src/preload/      мост через contextBridge
   renderer/         проект Angular CLI
@@ -65,18 +67,22 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 **Источник истины — Pydantic-модели в `server/app/protocol.py`.** Из них генерируется `protocol/schema.json`, а из него — TypeScript-типы и zod-схемы клиента в `client/src/protocol.gen.ts`. Сгенерированные файлы руками не правят: меняется модель, затем запускается `gen:protocol`.
 
 - **Клиент → сервер:** `create {name, net}`, `join {roomId, name, net, resumeToken?}`, `signal {to, data}`, `mute {muted}`, `pair-report {peer, result, route, family, sameIp, ms, restarts}`, `ping`, `leave`.
-- **Сервер → клиент:** `joined {roomId, selfId, resumed, resumeToken, peers}`, `peer-joined {id, name}`, `peer-left {id}`, `signal {from, data}`, `mute {id, muted}`, `relay {a, b, via}`, `pong`, `error {code: room-full | bad-request}`.
+- **Сервер → клиент:** `joined {roomId, selfId, resumed, resumeToken, peers: [{id, name, muted}]}`, `peer-joined {id, name}`, `peer-left {id}`, `signal {from, data}`, `mute {id, muted}`, `relay {a, b, via}`, `pong`, `error {code: room-full | bad-request}`.
 - `data` в `signal` — это `{description}`, `{candidate}` или `{relayTrack: {mid, from}}`. Сервер его не читает и пересылает только внутри комнаты отправителя.
 - `join` на несуществующий id создаёт комнату. Пустая комната удаляется сразу, ссылка продолжает работать.
-- `resumeToken` = HMAC(`RESUME_SECRET`, roomId, peerId). В памяти он не хранится, поэтому переживает перезапуск сервера.
-- `net` — итог проверки сети клиента: `{nat, upnp, cgnat, doubleNat, vpn}`.
+- `resumeToken` = HMAC(`RESUME_SECRET`, roomId, peerId). В памяти он не хранится, поэтому переживает перезапуск сервера. В `join` нет поля `peerId`, поэтому токен несёт `peerId` в себе.
+- `net` — итог проверки сети клиента: `{nat, upnp, cgnat, doubleNat, vpn}`. Любое поле может быть `null` — «не определено»: часть проверки ещё не сделана или не успела.
+- Форматы и пределы — в «Константах». Сообщения клиента строгие: лишнее поле или неверный тип — `bad-request`. Сообщения сервера клиент разбирает терпимо: незнакомые поля отбрасываются.
 
 ## Константы
 
 | Что | Значение |
 | --- | --- |
 | Участников в комнате | 5 |
-| Длина id комнаты | ≥ 10 символов |
+| id комнаты | 12 символов из `abcdefghijkmnpqrstuvwxyz23456789` (без `l`, `o`, `0`, `1`; 60 бит, правило «≥ 10») |
+| id участника | 8 символов из того же алфавита |
+| Имя участника | 1–32 символа Unicode без управляющих |
+| Вложенность `data` в `signal` | ≤ 32 уровней, без `NaN` и `Infinity` |
 | WebSocket-ping сервера | раз в 15 с, ожидание ответа 15 с (флаги uvicorn) |
 | Максимальный размер сообщения | 64 КБ (`--ws-max-size`) |
 | `ping` клиента / таймаут `pong` | 10 с / 5 с |
@@ -117,7 +123,7 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 
 ## Команды
 
-Установка: `uv sync` из `server/`, `npm ci` из корня. `dev:client` появится на 4.1, `gen:protocol` — на 0.3, остальные команды работают.
+Установка: `uv sync` из `server/`, `npm ci` из корня. `dev:client` появится на 4.1, остальные команды работают.
 - **Сервер, из `server/`:** `uv run uvicorn app.main:app --reload`, `uv run pytest`, `uv run ruff check`, `uv run ruff format`, `uv run mypy`.
 - **Клиент, из корня:** `npm run dev:client` (`ng serve` и Electron вместе), `npm test`, `npm run lint` (ESLint и `prettier --check`), `npm run format`, `npm run typecheck`.
 - **Протокол, из корня:** `npm run gen:protocol` — выгрузить JSON Schema из Pydantic и сгенерировать типы и zod-схемы клиента.
@@ -155,10 +161,10 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 ### Этап 0. Репозиторий и общий протокол
 
 - [x] 0.1 Сервер: проект uv в `server/` (Python 3.13, FastAPI, uvicorn[standard], Pydantic v2), ruff, mypy strict, pytest. Клиент: npm workspace `client`, TypeScript strict, ESLint, Prettier, vitest.
-- [ ] 0.2 `server/app/protocol.py`: Pydantic-модели всех сообщений с camelCase в JSON, генератор id комнаты.
-- [ ] 0.3 Генерация протокола: `protocol/schema.json` из Pydantic, из него — TypeScript-типы и zod-схемы в `client/src/protocol.gen.ts`. Скрипт `gen:protocol`. Сгенерированные файлы пишутся с LF и не должны падать на `npm run lint`: исключить их из Prettier и ESLint или прогонять Prettier в генераторе. Скрипт генератора на TypeScript должен входить в `include` какого-нибудь tsconfig.
-- [ ] 0.4 CI: ruff, mypy и pytest для сервера; lint, typecheck и vitest для клиента; проверка, что сгенерированный протокол актуален (`gen:protocol`, затем `git diff --exit-code`).
-- [ ] 0.5 Заказать сертификат подписи кода: выпуск занимает время, а нужен он к этапу 11.
+- [x] 0.2 `server/app/protocol.py`: Pydantic-модели всех сообщений с camelCase в JSON, генератор id комнаты.
+- [x] 0.3 Генерация протокола: `protocol/schema.json` из Pydantic, из него — TypeScript-типы и zod-схемы в `client/src/protocol.gen.ts`. Скрипт `gen:protocol`. Сгенерированные файлы пишутся с LF и не должны падать на `npm run lint`: исключить их из Prettier и ESLint или прогонять Prettier в генераторе. Скрипт генератора на TypeScript должен входить в `include` какого-нибудь tsconfig.
+- [x] 0.4 CI: ruff, mypy и pytest для сервера; lint, typecheck и vitest для клиента; проверка, что сгенерированный протокол актуален (`gen:protocol`, затем `git diff --exit-code`).
+- [ ] 0.5 Выбрать поставщика сертификата подписи кода и убедиться, что он обслужит разработчика: страна, форма (физлицо, ИП, компания), имя в сертификате. Чек-лист: `docs/superpowers/specs/2026-10-21-stage-0.5-code-signing-checklist.md`. Сам сертификат заказывается в 11.2.
 
 Готово, когда: `uv run pytest` и `npm test` проходят, модели протокола покрыты тестами, CI зелёный.
 
@@ -265,7 +271,7 @@ JSON по одному WebSocket `wss://<домен>/ws`, в каждом соо
 ### Этап 11. Дистрибуция
 
 - [ ] 11.1 Установщик NSIS через electron-builder. Установка с правами администратора — ради правила брандмауэра.
-- [ ] 11.2 Подпись установщика и приложения сертификатом из 0.5.
+- [ ] 11.2 Подпись установщика и приложения сертификатом поставщика из 0.5. Сертификат заказывается за 3–4 недели до подписи: срок действия не больше 460 дней идёт с выпуска. Чек-лист — тот же, что в 0.5.
 - [ ] 11.3 Автообновление через electron-updater с нашего сервера.
 - [ ] 11.4 Раздача установщика и файлов обновлений: Caddy отдаёт их из `./releases` на VPS, установщик — по прямой ссылке.
 
