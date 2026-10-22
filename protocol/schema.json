@@ -1,0 +1,659 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tete-a-tete signaling protocol",
+  "$defs": {
+    "CandidateType": {
+      "enum": [
+        "host",
+        "srflx",
+        "prflx",
+        "upnp"
+      ],
+      "type": "string"
+    },
+    "ClientCreate": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "create",
+          "title": "Type",
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/Name"
+        },
+        "net": {
+          "$ref": "#/$defs/NetInfo"
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "net"
+      ],
+      "title": "ClientCreate",
+      "type": "object"
+    },
+    "ClientJoin": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "join",
+          "title": "Type",
+          "type": "string"
+        },
+        "roomId": {
+          "$ref": "#/$defs/RoomId"
+        },
+        "name": {
+          "$ref": "#/$defs/Name"
+        },
+        "net": {
+          "$ref": "#/$defs/NetInfo"
+        },
+        "resumeToken": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResumeToken"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "roomId",
+        "name",
+        "net"
+      ],
+      "title": "ClientJoin",
+      "type": "object"
+    },
+    "ClientLeave": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "leave",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ClientLeave",
+      "type": "object"
+    },
+    "ClientMessage": {
+      "discriminator": {
+        "mapping": {
+          "create": "#/$defs/ClientCreate",
+          "join": "#/$defs/ClientJoin",
+          "leave": "#/$defs/ClientLeave",
+          "mute": "#/$defs/ClientMute",
+          "pair-report": "#/$defs/ClientPairReport",
+          "ping": "#/$defs/ClientPing",
+          "signal": "#/$defs/ClientSignal"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ClientCreate"
+        },
+        {
+          "$ref": "#/$defs/ClientJoin"
+        },
+        {
+          "$ref": "#/$defs/ClientSignal"
+        },
+        {
+          "$ref": "#/$defs/ClientMute"
+        },
+        {
+          "$ref": "#/$defs/ClientPairReport"
+        },
+        {
+          "$ref": "#/$defs/ClientPing"
+        },
+        {
+          "$ref": "#/$defs/ClientLeave"
+        }
+      ]
+    },
+    "ClientMute": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "mute",
+          "title": "Type",
+          "type": "string"
+        },
+        "muted": {
+          "title": "Muted",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "muted"
+      ],
+      "title": "ClientMute",
+      "type": "object"
+    },
+    "ClientPairReport": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "pair-report",
+          "title": "Type",
+          "type": "string"
+        },
+        "peer": {
+          "$ref": "#/$defs/PeerId"
+        },
+        "result": {
+          "$ref": "#/$defs/PairResult"
+        },
+        "route": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Route"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "family": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IpFamily"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sameIp": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Sameip"
+        },
+        "ms": {
+          "anyOf": [
+            {
+              "maximum": 3600000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ms"
+        },
+        "restarts": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Restarts",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "peer",
+        "result",
+        "route",
+        "family",
+        "sameIp",
+        "ms",
+        "restarts"
+      ],
+      "title": "ClientPairReport",
+      "type": "object"
+    },
+    "ClientPing": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "ping",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ClientPing",
+      "type": "object"
+    },
+    "ClientSignal": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "signal",
+          "title": "Type",
+          "type": "string"
+        },
+        "to": {
+          "$ref": "#/$defs/PeerId"
+        },
+        "data": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Data",
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "to",
+        "data"
+      ],
+      "title": "ClientSignal",
+      "type": "object"
+    },
+    "ErrorCode": {
+      "enum": [
+        "room-full",
+        "bad-request"
+      ],
+      "type": "string"
+    },
+    "IpFamily": {
+      "enum": [
+        "ipv4",
+        "ipv6"
+      ],
+      "type": "string"
+    },
+    "JsonValue": {},
+    "Name": {
+      "maxLength": 32,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]+$",
+      "type": "string"
+    },
+    "NatType": {
+      "enum": [
+        "open",
+        "cone",
+        "symmetric",
+        "no-udp"
+      ],
+      "type": "string"
+    },
+    "NetInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "nat": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NatType"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "upnp": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Upnp"
+        },
+        "cgnat": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cgnat"
+        },
+        "doubleNat": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Doublenat"
+        },
+        "vpn": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Vpn"
+        }
+      },
+      "required": [
+        "nat",
+        "upnp",
+        "cgnat",
+        "doubleNat",
+        "vpn"
+      ],
+      "title": "NetInfo",
+      "type": "object"
+    },
+    "PairResult": {
+      "enum": [
+        "direct",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "PeerId": {
+      "pattern": "^[a-km-np-z2-9]{8}$",
+      "type": "string"
+    },
+    "PeerInfo": {
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/PeerId"
+        },
+        "name": {
+          "$ref": "#/$defs/Name"
+        },
+        "muted": {
+          "title": "Muted",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "muted"
+      ],
+      "title": "PeerInfo",
+      "type": "object"
+    },
+    "ResumeToken": {
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.-]+$",
+      "type": "string"
+    },
+    "RoomId": {
+      "pattern": "^[a-km-np-z2-9]{12}$",
+      "type": "string"
+    },
+    "Route": {
+      "additionalProperties": false,
+      "properties": {
+        "local": {
+          "$ref": "#/$defs/CandidateType"
+        },
+        "remote": {
+          "$ref": "#/$defs/CandidateType"
+        }
+      },
+      "required": [
+        "local",
+        "remote"
+      ],
+      "title": "Route",
+      "type": "object"
+    },
+    "ServerError": {
+      "properties": {
+        "type": {
+          "const": "error",
+          "title": "Type",
+          "type": "string"
+        },
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        }
+      },
+      "required": [
+        "type",
+        "code"
+      ],
+      "title": "ServerError",
+      "type": "object"
+    },
+    "ServerJoined": {
+      "properties": {
+        "type": {
+          "const": "joined",
+          "title": "Type",
+          "type": "string"
+        },
+        "roomId": {
+          "$ref": "#/$defs/RoomId"
+        },
+        "selfId": {
+          "$ref": "#/$defs/PeerId"
+        },
+        "resumed": {
+          "title": "Resumed",
+          "type": "boolean"
+        },
+        "resumeToken": {
+          "$ref": "#/$defs/ResumeToken"
+        },
+        "peers": {
+          "items": {
+            "$ref": "#/$defs/PeerInfo"
+          },
+          "maxItems": 4,
+          "title": "Peers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "roomId",
+        "selfId",
+        "resumed",
+        "resumeToken",
+        "peers"
+      ],
+      "title": "ServerJoined",
+      "type": "object"
+    },
+    "ServerMessage": {
+      "discriminator": {
+        "mapping": {
+          "error": "#/$defs/ServerError",
+          "joined": "#/$defs/ServerJoined",
+          "mute": "#/$defs/ServerMute",
+          "peer-joined": "#/$defs/ServerPeerJoined",
+          "peer-left": "#/$defs/ServerPeerLeft",
+          "pong": "#/$defs/ServerPong",
+          "relay": "#/$defs/ServerRelay",
+          "signal": "#/$defs/ServerSignal"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ServerJoined"
+        },
+        {
+          "$ref": "#/$defs/ServerPeerJoined"
+        },
+        {
+          "$ref": "#/$defs/ServerPeerLeft"
+        },
+        {
+          "$ref": "#/$defs/ServerSignal"
+        },
+        {
+          "$ref": "#/$defs/ServerMute"
+        },
+        {
+          "$ref": "#/$defs/ServerRelay"
+        },
+        {
+          "$ref": "#/$defs/ServerPong"
+        },
+        {
+          "$ref": "#/$defs/ServerError"
+        }
+      ]
+    },
+    "ServerMute": {
+      "properties": {
+        "type": {
+          "const": "mute",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/PeerId"
+        },
+        "muted": {
+          "title": "Muted",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "muted"
+      ],
+      "title": "ServerMute",
+      "type": "object"
+    },
+    "ServerPeerJoined": {
+      "properties": {
+        "type": {
+          "const": "peer-joined",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/PeerId"
+        },
+        "name": {
+          "$ref": "#/$defs/Name"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "name"
+      ],
+      "title": "ServerPeerJoined",
+      "type": "object"
+    },
+    "ServerPeerLeft": {
+      "properties": {
+        "type": {
+          "const": "peer-left",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/PeerId"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "title": "ServerPeerLeft",
+      "type": "object"
+    },
+    "ServerPong": {
+      "properties": {
+        "type": {
+          "const": "pong",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ServerPong",
+      "type": "object"
+    },
+    "ServerRelay": {
+      "properties": {
+        "type": {
+          "const": "relay",
+          "title": "Type",
+          "type": "string"
+        },
+        "a": {
+          "$ref": "#/$defs/PeerId"
+        },
+        "b": {
+          "$ref": "#/$defs/PeerId"
+        },
+        "via": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PeerId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "a",
+        "b",
+        "via"
+      ],
+      "title": "ServerRelay",
+      "type": "object"
+    },
+    "ServerSignal": {
+      "properties": {
+        "type": {
+          "const": "signal",
+          "title": "Type",
+          "type": "string"
+        },
+        "from": {
+          "$ref": "#/$defs/PeerId"
+        },
+        "data": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Data",
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "from",
+        "data"
+      ],
+      "title": "ServerSignal",
+      "type": "object"
+    }
+  }
+}
