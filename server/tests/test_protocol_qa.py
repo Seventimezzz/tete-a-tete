@@ -75,10 +75,6 @@ def test_fixture_covers_both_directions_and_both_verdicts() -> None:
     assert {c["expect"] for c in CASES} == {"accept", "reject"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-2: NaN and Infinity are not JSON but are accepted and then dumped as null",
-)
 def test_signal_data_with_nan_is_not_forwarded_altered() -> None:
     raw = '{"type":"signal","to":"abcdefgh","data":{"a":NaN}}'
     try:

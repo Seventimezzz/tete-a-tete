@@ -1,9 +1,18 @@
 """Signaling protocol: the source of truth for protocol/schema.json and the client."""
 
+import math
 import secrets
 from typing import Annotated, Any, Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    TypeAdapter,
+    ValidationError,
+)
 from pydantic.alias_generators import to_camel
 
 ID_ALPHABET: Final = "abcdefghijkmnpqrstuvwxyz23456789"
@@ -52,6 +61,27 @@ _SERVER_CONFIG: Final = ConfigDict(
 )
 
 
+def _reject_non_finite(data: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    """NaN and Infinity are not JSON, and 1e400 overflows to inf; dumping them gives null.
+
+    `allow_inf_nan=False` in the config does not reach inside JsonValue, so walk it.
+    """
+    stack: list[JsonValue] = [data]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, float):
+            if not math.isfinite(item):
+                raise ValueError("non-finite number")
+        elif isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return data
+
+
+_SignalData = Annotated[dict[str, JsonValue], AfterValidator(_reject_non_finite)]
+
+
 class _ClientModel(BaseModel):
     model_config = _CLIENT_CONFIG
 
@@ -96,7 +126,7 @@ class ClientJoin(_ClientModel):
 class ClientSignal(_ClientModel):
     type: Literal["signal"]
     to: PeerId
-    data: dict[str, JsonValue]
+    data: _SignalData
 
 
 class ClientMute(_ClientModel):

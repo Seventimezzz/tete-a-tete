@@ -165,3 +165,20 @@ def test_generated_room_id_is_accepted_in_join() -> None:
         }
     )
     assert isinstance(parse_client_message(raw), ClientJoin)
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e400", "-1e400"])
+@pytest.mark.parametrize("shape", ["{}", "[{}]", '{{"x":[1,{}]}}'])
+def test_signal_data_rejects_non_finite_numbers_at_any_depth(number: str, shape: str) -> None:
+    data = '{"a":' + shape.format(number) + "}"
+    raw = '{"type":"signal","to":"abcdefgh","data":' + data + "}"
+    with pytest.raises(BadRequestError) as info:
+        parse_client_message(raw)
+    assert info.value.__cause__ is None
+    assert info.value.__context__ is None
+
+
+def test_signal_data_keeps_finite_numbers() -> None:
+    raw = '{"type":"signal","to":"abcdefgh","data":{"a":[1.5,-2e10,{"b":0.0}]}}'
+    parsed = parse_client_message(raw)
+    assert isinstance(parsed, ClientSignal)

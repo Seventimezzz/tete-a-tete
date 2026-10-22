@@ -821,28 +821,19 @@
   "dir": "client",
   "label": "signal data NaN",
   "raw": "{\"type\":\"signal\",\"to\":\"abcdefgh\",\"data\":{\"a\":NaN}}",
-  "expect": "reject",
-  "bug": {
-   "py": "QA-2"
-  }
+  "expect": "reject"
  },
  {
   "dir": "client",
   "label": "signal data Infinity",
   "raw": "{\"type\":\"signal\",\"to\":\"abcdefgh\",\"data\":{\"a\":Infinity}}",
-  "expect": "reject",
-  "bug": {
-   "py": "QA-2"
-  }
+  "expect": "reject"
  },
  {
   "dir": "client",
   "label": "signal data -Infinity",
   "raw": "{\"type\":\"signal\",\"to\":\"abcdefgh\",\"data\":{\"a\":-Infinity}}",
-  "expect": "reject",
-  "bug": {
-   "py": "QA-2"
-  }
+  "expect": "reject"
  },
  {
   "dir": "client",
@@ -854,7 +845,8 @@
   "dir": "client",
   "label": "signal data 1e400",
   "raw": "{\"type\":\"signal\",\"to\":\"abcdefgh\",\"data\":{\"a\":1e400}}",
-  "expect": "accept"
+  "expect": "reject",
+  "expectZod": "accept"
  },
  {
   "dir": "client",
