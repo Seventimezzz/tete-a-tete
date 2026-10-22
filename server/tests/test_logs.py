@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import sys
 from collections.abc import Iterator
 
 import pytest
@@ -137,3 +138,54 @@ def test_traceback_replaced_by_type_name(capture: _Capture) -> None:
     text = "\n".join(capture.lines)
     _check_clean(text)
     assert len(capture.lines) == 2
+
+
+def test_last_resort_handler_filtered(capsys: pytest.CaptureFixture[str]) -> None:
+    logs.install_log_filter()
+    logs.install_log_filter()
+    last = logging.lastResort
+    assert last is not None
+    assert len([f for f in last.filters if isinstance(f, logs.PrivacyFilter)]) == 1
+    try:
+        raise ValueError(LEAKY)
+    except ValueError:
+        failed = logging.LogRecord(
+            "websockets.server", logging.ERROR, __file__, 1, "connection failed", (), sys.exc_info()
+        )
+    handshake = logging.LogRecord(
+        "uvicorn.error",
+        logging.WARNING,
+        __file__,
+        1,
+        '%s - "WebSocket %s" 403',
+        ("203.0.113.7:1", "/ws"),
+        None,
+    )
+    last.handle(failed)
+    last.handle(handshake)
+    err = capsys.readouterr().err
+    _check_clean(err)
+    assert "connection failed (ValueError)" in err
+
+
+@pytest.mark.parametrize(
+    ("last_line", "name"),
+    [
+        (f"app.config.ConfigError: {LEAKY}", "ConfigError"),
+        (f"ValueError: {LEAKY}", "ValueError"),
+        ("KeyboardInterrupt", "KeyboardInterrupt"),
+        (f"{LEAKY}", "unknown"),
+    ],
+)
+def test_traceback_text_in_message_replaced_by_type_name(
+    capture: _Capture, last_line: str, name: str
+) -> None:
+    # Starlette sends the lifespan failure as formatted text; uvicorn logs it as the message.
+    text = (
+        "Traceback (most recent call last):\n"
+        f'  File "x.py", line 1, in f\n    g("{LEAKY}")\n'
+        f"{last_line}\n"
+    )
+    logging.getLogger("uvicorn.error").error(text)
+    logging.getLogger("uvicorn.error").error("%s", text)
+    assert capture.lines == [f"uvicorn.error traceback omitted ({name})"] * 2
