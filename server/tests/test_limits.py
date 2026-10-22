@@ -46,12 +46,22 @@ def test_twenty_seats_per_key_then_refused() -> None:
 def test_handshakes_30_per_60s_counts_refused_too() -> None:
     limits, clock = make(seats_per_key=1000)
     for _ in range(30):
-        assert limits.try_open(KEY)
-    assert not limits.try_open(KEY)
-    clock.advance(59.9)
-    assert not limits.try_open(KEY)  # refused attempts keep the window full
-    clock.advance(60.0)
+        assert limits.try_open(KEY)  # t=0
+    clock.advance(50)
+    for _ in range(30):
+        assert not limits.try_open(KEY)  # refused, but recorded at t=50
+    clock.advance(11)  # t=61: the originals are gone, the refused ones are not
+    assert not limits.try_open(KEY)  # recorded at t=61 too
+    clock.advance(50)  # t=111: only the t=61 attempt is left
     assert limits.try_open(KEY)
+
+
+def test_handshake_window_memory_bounded_under_flood() -> None:
+    limits, _ = make(seats_per_key=1000)
+    for _ in range(10_000):
+        limits.try_open(KEY)
+    assert len(limits._handshakes[KEY]) <= limits.config.handshakes_per_window + 1
+    assert not limits.try_open(KEY)
 
 
 def test_global_connections() -> None:

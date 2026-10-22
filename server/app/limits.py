@@ -100,16 +100,18 @@ class Limits:
     def seats(self, key: str) -> int:
         return self._seats.get(key, 0)
 
-    def _hits(self, table: Window, key: str, now: float) -> deque[float]:
+    def _hits(self, table: Window, key: str, now: float, maxlen: int | None = None) -> deque[float]:
         """Timestamps for key within the window, expired ones dropped."""
-        hits = table.setdefault(key, deque())
+        hits = table.get(key)
+        if hits is None:
+            hits = table[key] = deque(maxlen=maxlen)
         while hits and hits[0] <= now - self.config.window:
             hits.popleft()
         return hits
 
     def try_open(self, key: str) -> bool:
         now = self._clock.now()
-        hits = self._hits(self._handshakes, key, now)
+        hits = self._hits(self._handshakes, key, now, self.config.handshakes_per_window + 1)
         hits.append(now)  # every attempt counts, refused ones too
         if len(hits) > self.config.handshakes_per_window:
             return False
