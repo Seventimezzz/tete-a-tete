@@ -1,0 +1,681 @@
+{
+  "client": {
+    "valid": [
+      {
+        "type": "create",
+        "name": "Аня",
+        "net": {
+          "nat": "cone",
+          "upnp": true,
+          "cgnat": false,
+          "doubleNat": false,
+          "vpn": false
+        }
+      },
+      {
+        "type": "create",
+        "name": "Anna",
+        "net": {
+          "nat": null,
+          "upnp": null,
+          "cgnat": null,
+          "doubleNat": null,
+          "vpn": null
+        }
+      },
+      {
+        "type": "join",
+        "roomId": "abcdefghijkm",
+        "name": "Аня",
+        "net": {
+          "nat": "cone",
+          "upnp": true,
+          "cgnat": false,
+          "doubleNat": false,
+          "vpn": false
+        }
+      },
+      {
+        "type": "join",
+        "roomId": "abcdefghijkm",
+        "name": "Аня",
+        "net": {
+          "nat": "cone",
+          "upnp": true,
+          "cgnat": false,
+          "doubleNat": false,
+          "vpn": false
+        },
+        "resumeToken": "abc.DEF-123_x"
+      },
+      {
+        "type": "join",
+        "roomId": "abcdefghijkm",
+        "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+        "net": {
+          "nat": "cone",
+          "upnp": true,
+          "cgnat": false,
+          "doubleNat": false,
+          "vpn": false
+        }
+      },
+      {
+        "type": "join",
+        "roomId": "abcdefghijkm",
+        "name": "Вячеслав Иванов",
+        "net": {
+          "nat": "cone",
+          "upnp": true,
+          "cgnat": false,
+          "doubleNat": false,
+          "vpn": false
+        }
+      },
+      {
+        "type": "signal",
+        "to": "abcdefgh",
+        "data": {
+          "description": {
+            "type": "offer",
+            "sdp": "v=0\r\n"
+          }
+        }
+      },
+      {
+        "type": "signal",
+        "to": "abcdefgh",
+        "data": {
+          "candidate": {
+            "candidate": "candidate:1 1 udp 1 192.0.2.1 5000 typ host",
+            "sdpMid": "0"
+          }
+        }
+      },
+      {
+        "type": "signal",
+        "to": "abcdefgh",
+        "data": {
+          "relayTrack": {
+            "mid": "1",
+            "from": "mnpqrstu"
+          }
+        }
+      },
+      {
+        "type": "mute",
+        "muted": true
+      },
+      {
+        "type": "pair-report",
+        "peer": "mnpqrstu",
+        "result": "direct",
+        "route": {
+          "local": "host",
+          "remote": "srflx"
+        },
+        "family": "ipv4",
+        "sameIp": false,
+        "ms": 850,
+        "restarts": 0
+      },
+      {
+        "type": "pair-report",
+        "peer": "mnpqrstu",
+        "result": "failed",
+        "route": null,
+        "family": null,
+        "sameIp": null,
+        "ms": null,
+        "restarts": 2
+      },
+      {
+        "type": "ping"
+      },
+      {
+        "type": "leave"
+      }
+    ],
+    "invalid": [
+      {
+        "why": "roomId из 11 символов",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijk",
+          "name": "Аня",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "roomId из 13 символов",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijkmn",
+          "name": "Аня",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "roomId с l",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijkl",
+          "name": "Аня",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "roomId с o",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijko",
+          "name": "Аня",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "roomId с 0",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijk0",
+          "name": "Аня",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "roomId с 1",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijk1",
+          "name": "Аня",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "roomId с заглавной буквой",
+        "message": {
+          "type": "join",
+          "roomId": "Abcdefghijkm",
+          "name": "Аня",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "name пустое",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijkm",
+          "name": "",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "name из 33 символов",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijkm",
+          "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "name из 33 эмодзи",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijkm",
+          "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "name с управляющим \u0001",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijkm",
+          "name": "a\u0001b",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "name с управляющим ",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijkm",
+          "name": "ab",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "name с управляющим ",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijkm",
+          "name": "ab",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "ms = -1",
+        "message": {
+          "type": "pair-report",
+          "peer": "mnpqrstu",
+          "result": "direct",
+          "route": {
+            "local": "host",
+            "remote": "srflx"
+          },
+          "family": "ipv4",
+          "sameIp": false,
+          "ms": -1,
+          "restarts": 0
+        }
+      },
+      {
+        "why": "ms = 3600001",
+        "message": {
+          "type": "pair-report",
+          "peer": "mnpqrstu",
+          "result": "direct",
+          "route": {
+            "local": "host",
+            "remote": "srflx"
+          },
+          "family": "ipv4",
+          "sameIp": false,
+          "ms": 3600001,
+          "restarts": 0
+        }
+      },
+      {
+        "why": "restarts = 101",
+        "message": {
+          "type": "pair-report",
+          "peer": "mnpqrstu",
+          "result": "direct",
+          "route": {
+            "local": "host",
+            "remote": "srflx"
+          },
+          "family": "ipv4",
+          "sameIp": false,
+          "ms": 850,
+          "restarts": 101
+        }
+      },
+      {
+        "why": "ms = 1.5",
+        "message": {
+          "type": "pair-report",
+          "peer": "mnpqrstu",
+          "result": "direct",
+          "route": {
+            "local": "host",
+            "remote": "srflx"
+          },
+          "family": "ipv4",
+          "sameIp": false,
+          "ms": 1.5,
+          "restarts": 0
+        }
+      },
+      {
+        "why": "nat = full-cone",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijkm",
+          "name": "Аня",
+          "net": {
+            "nat": "full-cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          }
+        }
+      },
+      {
+        "why": "net без ключа vpn",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijkm",
+          "name": "Аня",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false
+          }
+        }
+      },
+      {
+        "why": "muted строкой",
+        "message": {
+          "type": "mute",
+          "muted": "true"
+        }
+      },
+      {
+        "why": "data массив",
+        "message": {
+          "type": "signal",
+          "to": "abcdefgh",
+          "data": []
+        }
+      },
+      {
+        "why": "data строка",
+        "message": {
+          "type": "signal",
+          "to": "abcdefgh",
+          "data": "x"
+        }
+      },
+      {
+        "why": "to из 7 символов",
+        "message": {
+          "type": "signal",
+          "to": "abcdefg",
+          "data": {
+            "description": {
+              "type": "offer",
+              "sdp": "v=0\r\n"
+            }
+          }
+        }
+      },
+      {
+        "why": "resumeToken из 129 символов",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijkm",
+          "name": "Аня",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          },
+          "resumeToken": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      {
+        "why": "resumeToken с пробелом",
+        "message": {
+          "type": "join",
+          "roomId": "abcdefghijkm",
+          "name": "Аня",
+          "net": {
+            "nat": "cone",
+            "upnp": true,
+            "cgnat": false,
+            "doubleNat": false,
+            "vpn": false
+          },
+          "resumeToken": "abc def"
+        }
+      },
+      {
+        "why": "лишнее поле",
+        "message": {
+          "type": "ping",
+          "x": 1
+        }
+      },
+      {
+        "why": "неизвестный type",
+        "message": {
+          "type": "kick",
+          "id": "abcdefgh"
+        }
+      },
+      {
+        "why": "нет type",
+        "message": {
+          "muted": true
+        }
+      },
+      {
+        "why": "type в другом регистре",
+        "message": {
+          "type": "Ping"
+        }
+      }
+    ]
+  },
+  "server": {
+    "valid": [
+      {
+        "type": "joined",
+        "roomId": "abcdefghijkm",
+        "selfId": "defghijk",
+        "resumed": false,
+        "resumeToken": "abc.DEF-123_x",
+        "peers": []
+      },
+      {
+        "type": "joined",
+        "roomId": "abcdefghijkm",
+        "selfId": "defghijk",
+        "resumed": false,
+        "resumeToken": "abc.DEF-123_x",
+        "peers": [
+          {
+            "id": "abcdefgh",
+            "name": "Игрок0",
+            "muted": true
+          },
+          {
+            "id": "mnpqrstu",
+            "name": "Игрок1",
+            "muted": false
+          },
+          {
+            "id": "vwxyz234",
+            "name": "Игрок2",
+            "muted": true
+          },
+          {
+            "id": "56789abc",
+            "name": "Игрок3",
+            "muted": false
+          }
+        ]
+      },
+      {
+        "type": "joined",
+        "roomId": "abcdefghijkm",
+        "selfId": "defghijk",
+        "resumed": true,
+        "resumeToken": "abc.DEF-123_x",
+        "peers": [
+          {
+            "id": "abcdefgh",
+            "name": "Игрок0",
+            "muted": true
+          }
+        ]
+      },
+      {
+        "type": "peer-joined",
+        "id": "abcdefgh",
+        "name": "Аня"
+      },
+      {
+        "type": "peer-left",
+        "id": "abcdefgh"
+      },
+      {
+        "type": "signal",
+        "from": "abcdefgh",
+        "data": {
+          "description": {
+            "type": "offer",
+            "sdp": "v=0\r\n"
+          }
+        }
+      },
+      {
+        "type": "mute",
+        "id": "abcdefgh",
+        "muted": false
+      },
+      {
+        "type": "relay",
+        "a": "abcdefgh",
+        "b": "mnpqrstu",
+        "via": "vwxyz234"
+      },
+      {
+        "type": "relay",
+        "a": "abcdefgh",
+        "b": "mnpqrstu",
+        "via": null
+      },
+      {
+        "type": "pong"
+      },
+      {
+        "type": "error",
+        "code": "room-full"
+      },
+      {
+        "type": "error",
+        "code": "bad-request"
+      }
+    ],
+    "invalid": [
+      {
+        "why": "relay с via числом",
+        "message": {
+          "type": "relay",
+          "a": "abcdefgh",
+          "b": "mnpqrstu",
+          "via": 5
+        }
+      },
+      {
+        "why": "joined с 5 участниками",
+        "message": {
+          "type": "joined",
+          "roomId": "abcdefghijkm",
+          "selfId": "defghijk",
+          "resumed": false,
+          "resumeToken": "abc.DEF-123_x",
+          "peers": [
+            {
+              "id": "abcdefgh",
+              "name": "Игрок0",
+              "muted": true
+            },
+            {
+              "id": "mnpqrstu",
+              "name": "Игрок1",
+              "muted": false
+            },
+            {
+              "id": "vwxyz234",
+              "name": "Игрок2",
+              "muted": true
+            },
+            {
+              "id": "56789abc",
+              "name": "Игрок3",
+              "muted": false
+            },
+            {
+              "id": "defghijk",
+              "name": "Игрок4",
+              "muted": true
+            }
+          ]
+        }
+      },
+      {
+        "why": "error с неизвестным code",
+        "message": {
+          "type": "error",
+          "code": "kicked"
+        }
+      }
+    ]
+  }
+}
