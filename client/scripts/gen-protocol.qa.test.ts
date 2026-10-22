@@ -232,19 +232,19 @@ describe('generator rejects what it cannot translate', () => {
     ).toThrow(UnsupportedSchemaError);
   });
 
-  it.fails('QA-3: required naming an inherited Object key such as "toString" is rejected', () => {
+  it('QA-3: required naming an inherited Object key such as "toString" is rejected', () => {
     expect(() =>
       generateZod({ $defs: { A: { type: 'object', properties: {}, required: ['toString'] } } }),
     ).toThrow(UnsupportedSchemaError);
   });
 
-  it.fails('QA-3: type "constructor" is reported as unsupported, not as a TypeError', () => {
+  it('QA-3: type "constructor" is reported as unsupported, not as a TypeError', () => {
     expect(() => generateZod({ $defs: { A: { type: 'constructor' } } })).toThrow(
       UnsupportedSchemaError,
     );
   });
 
-  it.fails('QA-4: a pattern JavaScript cannot compile fails at generation, not at import', () => {
+  it('QA-4: a pattern JavaScript cannot compile fails at generation, not at import', () => {
     for (const pattern of ['(?i)abc', '(?P<x>a)', 'a++', '\\Aabc\\Z']) {
       expect(() => generateZod({ $defs: { A: { type: 'string', pattern } } })).toThrow(
         UnsupportedSchemaError,
@@ -252,13 +252,13 @@ describe('generator rejects what it cannot translate', () => {
     }
   });
 
-  it.fails('QA-4: a definition named like a reserved word or "z" yields code that compiles', () => {
+  it('QA-4: a definition named like a reserved word or "z" fails at generation', () => {
     for (const name of ['z', 'default', 'class', 'delete']) {
-      expect(() => load({ $defs: { [name]: { type: 'string' } } })).not.toThrow();
+      expect(() => load({ $defs: { [name]: { type: 'string' } } })).toThrow(UnsupportedSchemaError);
     }
   });
 
-  it.fails('QA-4: a union variant without the discriminator literal fails at generation', () => {
+  it('QA-4: a union variant without the discriminator literal fails at generation', () => {
     const schema = {
       $defs: {
         A: { type: 'object', properties: { type: { const: 'a' } }, required: ['type'] },

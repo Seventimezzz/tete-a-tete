@@ -16,18 +16,78 @@ type Node = Record<string, unknown>;
 const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const REF_PREFIX = '#/$defs/';
 const ANNOTATIONS = ['title', 'description', 'default'];
-const BY_TYPE: Record<string, string[]> = {
-  string: ['pattern', 'minLength', 'maxLength'],
-  integer: ['minimum', 'maximum'],
-  boolean: [],
-  object: ['properties', 'required', 'additionalProperties'],
-  array: ['items', 'minItems', 'maxItems'],
-};
+const BY_TYPE = new Map<string, string[]>([
+  ['string', ['pattern', 'minLength', 'maxLength']],
+  ['integer', ['minimum', 'maximum']],
+  ['boolean', []],
+  ['object', ['properties', 'required', 'additionalProperties']],
+  ['array', ['items', 'minItems', 'maxItems']],
+]);
+// Имена, которые нельзя занимать определениям: зарезервированные слова ECMAScript и TypeScript
+// (в том числе строгого режима) и идентификаторы, которые использует сам сгенерированный код.
+const RESERVED_NAMES = new Set([
+  'await',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'debugger',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'enum',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'function',
+  'if',
+  'implements',
+  'import',
+  'in',
+  'instanceof',
+  'interface',
+  'let',
+  'new',
+  'null',
+  'package',
+  'private',
+  'protected',
+  'public',
+  'return',
+  'static',
+  'super',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typeof',
+  'var',
+  'void',
+  'while',
+  'with',
+  'yield',
+  'z',
+  'RegExp',
+  'loneSurrogate',
+]);
 
 const HEADER = `// Сгенерировано из protocol/schema.json командой npm run gen:protocol. Не править руками.
 // Источник истины — Pydantic-модели в server/app/protocol.py.
 import { z } from 'zod';
 `;
+// Одиночный суррогат: Pydantic такую строку отклоняет, а regex с флагом u и [...value] пропускают.
+// Регулярное выражение без флага u работает по кодовым единицам UTF-16.
+const WELL_FORMED = `
+const loneSurrogate =
+  /[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]/;
+`;
+let currentDefs: Node = {};
 
 function pointer(path: string, key: string): string {
   return `${path}/${key.replaceAll('~', '~0').replaceAll('/', '~1')}`;
@@ -139,6 +199,7 @@ function node(raw: unknown, path: string, deps: Set<string>): string {
       if (!('$ref' in item)) {
         throw new UnsupportedSchemaError(pointer(at, String(i)), 'oneOf items must be references');
       }
+      checkVariant(item, disc['propertyName'] as string, pointer(at, String(i)));
       return node(item, pointer(at, String(i)), deps);
     });
     return `z.discriminatedUnion(${JSON.stringify(disc['propertyName'])}, [${items.join(', ')}])`;
@@ -146,13 +207,14 @@ function node(raw: unknown, path: string, deps: Set<string>): string {
   if (Object.keys(n).every((k) => ANNOTATIONS.includes(k))) return 'z.unknown()';
 
   const type = n['type'];
-  if (typeof type !== 'string' || !(type in BY_TYPE)) {
+  const allowedKeys = typeof type === 'string' ? BY_TYPE.get(type) : undefined;
+  if (typeof type !== 'string' || allowedKeys === undefined) {
     throw new UnsupportedSchemaError(
       pointer(path, 'type'),
       `unsupported type ${JSON.stringify(type)}`,
     );
   }
-  allowOnly(n, path, ['type', ...(BY_TYPE[type] ?? [])]);
+  allowOnly(n, path, ['type', ...allowedKeys]);
 
   switch (type) {
     case 'boolean':
@@ -168,12 +230,34 @@ function node(raw: unknown, path: string, deps: Set<string>): string {
   }
 }
 
+function checkVariant(item: Node, property: string, path: string): void {
+  const ref = typeof item['$ref'] === 'string' ? item['$ref'] : '';
+  const name = ref.startsWith(REF_PREFIX) ? ref.slice(REF_PREFIX.length) : '';
+  const target = Object.hasOwn(currentDefs, name) ? currentDefs[name] : undefined;
+  const props = isNode(target) && target['type'] === 'object' ? target['properties'] : undefined;
+  const tag = isNode(props) && Object.hasOwn(props, property) ? props[property] : undefined;
+  if (!isNode(tag) || typeof tag['const'] !== 'string') {
+    throw new UnsupportedSchemaError(
+      path,
+      `oneOf variant must be an object whose "${property}" property is a const string`,
+    );
+  }
+}
+
 function stringNode(n: Node, path: string): string {
-  let out = 'z.string()';
+  let out = 'z.string().refine((value) => !loneSurrogate.test(value))';
   if ('pattern' in n) {
     const pattern = n['pattern'];
     if (typeof pattern !== 'string') {
       throw new UnsupportedSchemaError(pointer(path, 'pattern'), 'expected a string');
+    }
+    try {
+      new RegExp(pattern, 'u');
+    } catch {
+      throw new UnsupportedSchemaError(
+        pointer(path, 'pattern'),
+        'pattern is not a valid ECMAScript regular expression',
+      );
     }
     out += `.regex(new RegExp(${JSON.stringify(pattern)}, 'u'))`;
   }
@@ -232,7 +316,7 @@ function objectNode(n: Node, path: string, deps: Set<string>): string {
   }
   const required = new Set<string>(requiredRaw);
   for (const key of required) {
-    if (!(key in props)) {
+    if (!Object.hasOwn(props, key)) {
       throw new UnsupportedSchemaError(pointer(path, 'required'), `unknown property "${key}"`);
     }
   }
@@ -248,6 +332,7 @@ export function generateZod(schema: unknown): string {
   const root = asNode(schema, '#');
   allowOnly(root, '#', ['$schema', '$defs']);
   const defs = asNode(root['$defs'] ?? {}, '#/$defs');
+  currentDefs = defs;
 
   const exprs = new Map<string, string>();
   const deps = new Map<string, Set<string>>();
@@ -255,6 +340,9 @@ export function generateZod(schema: unknown): string {
     const path = pointer('#/$defs', name);
     if (!NAME_RE.test(name)) {
       throw new UnsupportedSchemaError(path, `definition name "${name}" is not an identifier`);
+    }
+    if (RESERVED_NAMES.has(name)) {
+      throw new UnsupportedSchemaError(path, `definition name "${name}" is reserved`);
     }
     const used = new Set<string>();
     exprs.set(name, node(def, path, used));
@@ -290,7 +378,8 @@ export function generateZod(schema: unknown): string {
     (name) =>
       `export const ${name} = ${exprs.get(name) ?? ''};\nexport type ${name} = z.infer<typeof ${name}>;`,
   );
-  return `${HEADER}\n${body.join('\n\n')}\n`;
+  const text = body.join('\n\n');
+  return `${HEADER}${text.includes('loneSurrogate') ? WELL_FORMED : ''}\n${text}\n`;
 }
 
 if (import.meta.main) {

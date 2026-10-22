@@ -87,19 +87,13 @@
   "dir": "client",
   "label": "name lone high surrogate",
   "raw": "{\"type\":\"create\",\"name\":\"a\\ud800b\",\"net\":{\"nat\":\"cone\",\"upnp\":true,\"cgnat\":false,\"doubleNat\":false,\"vpn\":false}}",
-  "expect": "reject",
-  "bug": {
-   "zod": "QA-1"
-  }
+  "expect": "reject"
  },
  {
   "dir": "client",
   "label": "name lone low surrogate",
   "raw": "{\"type\":\"create\",\"name\":\"a\\udc00b\",\"net\":{\"nat\":\"cone\",\"upnp\":true,\"cgnat\":false,\"doubleNat\":false,\"vpn\":false}}",
-  "expect": "reject",
-  "bug": {
-   "zod": "QA-1"
-  }
+  "expect": "reject"
  },
  {
   "dir": "client",
@@ -867,9 +861,8 @@
   "label": "signal data lone surrogate",
   "raw": "{\"type\":\"signal\",\"to\":\"abcdefgh\",\"data\":{\"a\":\"\\ud800\"}}",
   "expect": "reject",
-  "bug": {
-   "zod": "QA-1"
-  }
+  "expectZod": "accept",
+  "note": "intended divergence: the server rejects, the opaque client schema for data accepts"
  },
  {
   "dir": "client",
@@ -1121,10 +1114,7 @@
   "dir": "server",
   "label": "peer-joined name lone surrogate",
   "raw": "{\"type\":\"peer-joined\",\"id\":\"abcdefgh\",\"name\":\"a\\ud800\"}",
-  "expect": "reject",
-  "bug": {
-   "zod": "QA-1"
-  }
+  "expect": "reject"
  },
  {
   "dir": "server",

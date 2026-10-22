@@ -113,4 +113,31 @@ describe('generateZod', () => {
     const out = generateZod({ $defs: { A: { type: 'string' } } });
     expect(out.startsWith(`${HEADER}import { z } from 'zod';`)).toBe(true);
   });
+
+  it('names the path of an uncompilable pattern', () => {
+    const error = catchError(() =>
+      generateZod({ $defs: { A: { type: 'string', pattern: '(?i)a' } } }),
+    );
+    expect((error as UnsupportedSchemaError).path).toBe('#/$defs/A/pattern');
+  });
+  it('names the path of a reserved definition name', () => {
+    const error = catchError(() => generateZod({ $defs: { class: { type: 'string' } } }));
+    expect((error as UnsupportedSchemaError).path).toBe('#/$defs/class');
+  });
+  it('names the path of a union variant without the discriminator literal', () => {
+    const error = catchError(() =>
+      generateZod({
+        $defs: {
+          B: { type: 'object', properties: { x: { type: 'string' } }, required: ['x'] },
+          U: { oneOf: [{ $ref: '#/$defs/B' }], discriminator: { propertyName: 'type' } },
+        },
+      }),
+    );
+    expect((error as UnsupportedSchemaError).path).toBe('#/$defs/U/oneOf/0');
+  });
+  it('emits the lone-surrogate check once and only when a string is used', () => {
+    const withString = generateZod({ $defs: { A: { type: 'string' }, B: { type: 'string' } } });
+    expect(withString.match(/const loneSurrogate/g)).toHaveLength(1);
+    expect(generateZod({ $defs: { A: { type: 'boolean' } } })).not.toContain('loneSurrogate');
+  });
 });

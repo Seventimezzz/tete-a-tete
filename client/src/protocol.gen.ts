@@ -2,6 +2,8 @@
 // Источник истины — Pydantic-модели в server/app/protocol.py.
 import { z } from 'zod';
 
+const loneSurrogate = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+
 export const CandidateType = z.enum(['host', 'srflx', 'prflx', 'upnp']);
 export type CandidateType = z.infer<typeof CandidateType>;
 
@@ -25,6 +27,7 @@ export type JsonValue = z.infer<typeof JsonValue>;
 
 export const Name = z
   .string()
+  .refine((value) => !loneSurrogate.test(value))
   .regex(new RegExp('^[^\\x00-\\x1f\\x7f-\\x9f]+$', 'u'))
   .refine((value) => [...value].length >= 1)
   .refine((value) => [...value].length <= 32);
@@ -48,7 +51,10 @@ export type ClientCreate = z.infer<typeof ClientCreate>;
 export const PairResult = z.enum(['direct', 'failed']);
 export type PairResult = z.infer<typeof PairResult>;
 
-export const PeerId = z.string().regex(new RegExp('^[a-km-np-z2-9]{8}$', 'u'));
+export const PeerId = z
+  .string()
+  .refine((value) => !loneSurrogate.test(value))
+  .regex(new RegExp('^[a-km-np-z2-9]{8}$', 'u'));
 export type PeerId = z.infer<typeof PeerId>;
 
 export const ClientSignal = z.strictObject({
@@ -63,11 +69,15 @@ export type PeerInfo = z.infer<typeof PeerInfo>;
 
 export const ResumeToken = z
   .string()
+  .refine((value) => !loneSurrogate.test(value))
   .regex(new RegExp('^[A-Za-z0-9_.-]+$', 'u'))
   .refine((value) => [...value].length <= 128);
 export type ResumeToken = z.infer<typeof ResumeToken>;
 
-export const RoomId = z.string().regex(new RegExp('^[a-km-np-z2-9]{12}$', 'u'));
+export const RoomId = z
+  .string()
+  .refine((value) => !loneSurrogate.test(value))
+  .regex(new RegExp('^[a-km-np-z2-9]{12}$', 'u'));
 export type RoomId = z.infer<typeof RoomId>;
 
 export const ClientJoin = z.strictObject({
