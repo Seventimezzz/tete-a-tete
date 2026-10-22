@@ -92,3 +92,48 @@ def test_loop_exception_handler_writes_type_name_only(
         assert "203.0.113.7" not in caplog.text
     finally:
         loop.close()
+
+
+class _Capture(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.lines: list[str] = []
+        self.setFormatter(logging.Formatter("%(name)s %(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(self.format(record))
+
+
+@pytest.fixture
+def capture() -> Iterator[_Capture]:
+    handler = _Capture()
+    root = logging.getLogger()
+    old = root.level
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG)
+    logs.install_log_filter()
+    logs.install_log_filter()
+    yield handler
+    root.removeHandler(handler)
+    root.setLevel(old)
+
+
+def test_child_loggers_filtered_via_handler(capture: _Capture) -> None:
+    logging.getLogger("websockets.server").debug("frame %s", "203.0.113.7")
+    logging.getLogger("uvicorn.error.child").info(
+        '%s - "WebSocket %s" [accepted]', "203.0.113.7:1", "/ws"
+    )
+    logging.getLogger("tete").info("kept")
+    assert capture.lines == ["tete kept"]
+    assert len(capture.filters) == 1
+
+
+def test_traceback_replaced_by_type_name(capture: _Capture) -> None:
+    try:
+        raise ValueError(LEAKY)
+    except ValueError:
+        logging.getLogger("uvicorn.error").exception("Exception in ASGI application\n")
+        logging.getLogger("websockets.server").error("opening handshake failed", exc_info=True)
+    text = "\n".join(capture.lines)
+    _check_clean(text)
+    assert len(capture.lines) == 2
