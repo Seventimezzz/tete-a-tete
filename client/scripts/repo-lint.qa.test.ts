@@ -23,7 +23,7 @@ describe('files the CI client job lints (npm run lint runs prettier --check .)',
     expect(prettierCheck('protocol/examples.json')).toBe(true);
   });
 
-  it.fails('QA-5: .github/workflows/ci.yml passes prettier --check (double quotes in it)', () => {
+  it('QA-5: .github/workflows/ci.yml passes prettier --check (double quotes in it)', () => {
     expect(prettierCheck('.github/workflows/ci.yml')).toBe(true);
   });
 });
