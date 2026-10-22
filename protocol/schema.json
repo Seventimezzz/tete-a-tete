@@ -231,7 +231,7 @@
       "type": "object"
     },
     "ErrorCode": {
-      "enum": ["room-full", "bad-request"],
+      "enum": ["room-full", "bad-request", "rate-limited"],
       "type": "string"
     },
     "IpFamily": {

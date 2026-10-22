@@ -620,6 +620,10 @@
       {
         "type": "error",
         "code": "bad-request"
+      },
+      {
+        "type": "error",
+        "code": "rate-limited"
       }
     ],
     "invalid": [

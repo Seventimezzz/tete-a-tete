@@ -27,6 +27,10 @@ PAIR_RESTARTS_MAX: Final = 100
 # `data` of a signal: the object itself is depth 1, each nested object or array adds 1.
 # Deeper data parses but cannot be serialized back for forwarding (about 98 levels).
 MAX_SIGNAL_DATA_DEPTH: Final = 32
+# WebSocket close codes; they are not part of the JSON schema.
+CLOSE_REPLACED: Final = 4000  # the seat was taken by a new join
+CLOSE_SLOW_READER: Final = 4001  # the outgoing queue overflowed
+CLOSE_RATE_LIMIT: Final = 1008  # rate limit exceeded
 _DATA_TOO_DEEP: Final = "signal data is nested too deeply"
 
 
@@ -60,7 +64,7 @@ type NatType = Literal["open", "cone", "symmetric", "no-udp"]
 type CandidateType = Literal["host", "srflx", "prflx", "upnp"]
 type PairResult = Literal["direct", "failed"]
 type IpFamily = Literal["ipv4", "ipv6"]
-type ErrorCode = Literal["room-full", "bad-request"]
+type ErrorCode = Literal["room-full", "bad-request", "rate-limited"]
 
 
 def _require_type(schema: dict[str, Any]) -> None:

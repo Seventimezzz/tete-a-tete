@@ -16,7 +16,7 @@ export type ClientMute = z.infer<typeof ClientMute>;
 export const ClientPing = z.strictObject({ type: z.literal('ping') });
 export type ClientPing = z.infer<typeof ClientPing>;
 
-export const ErrorCode = z.enum(['room-full', 'bad-request']);
+export const ErrorCode = z.enum(['room-full', 'bad-request', 'rate-limited']);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
 export const IpFamily = z.enum(['ipv4', 'ipv6']);
