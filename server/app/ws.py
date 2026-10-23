@@ -7,7 +7,7 @@ logged, stored on the connection or put into an exception message.
 import asyncio
 import ipaddress
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
@@ -74,14 +74,38 @@ def _is_shared_key(host: str | None, key: str) -> bool:
     return addr.is_loopback
 
 
+type Abort = Callable[[], None]
+
+
+def transport_aborter(websocket: object) -> Abort | None:
+    """`abort` of the TCP transport behind a Starlette WebSocket served by uvicorn, or None.
+
+    ASGI has no way to drop a connection: after `websocket.close` uvicorn closes the transport
+    gracefully, and asyncio then waits for the send buffer to drain, without a time limit. A
+    client that does not read keeps such a socket open forever. Starlette keeps the ASGI
+    `receive`, which in uvicorn is a method of its protocol object, and that object holds the
+    transport. Anything else (another server, the test client, a wrapping middleware) gives
+    None, and the connection is closed the ASGI way only.
+    """
+    owner = getattr(getattr(websocket, "_receive", None), "__self__", None)
+    transport = getattr(owner, "transport", None)
+    abort = getattr(transport, "abort", None)
+    if callable(abort) and callable(getattr(transport, "is_closing", None)):
+        return abort  # type: ignore[no-any-return]
+    return None
+
+
 class Connection:
     """Implements rooms.Conn over a WebSocket: an outgoing queue drained by a writer task,
     and message and byte buckets for incoming frames."""
 
-    def __init__(self, websocket: Socket, key: str, state: WsState) -> None:
+    def __init__(
+        self, websocket: Socket, key: str, state: WsState, *, abort: Abort | None = None
+    ) -> None:
         self._ws = websocket
         self.key = key
         self._state = state
+        self._abort = abort
         config = state.limits.config
         now = state.clock.now()
         self._messages = TokenBucket(config.msg_burst, config.msg_rate, now)
@@ -157,7 +181,8 @@ class Connection:
     async def run(self) -> None:
         """Read until the client leaves or the connection is closed.
 
-        After close(code) the close frame gets at most CLOSE_WAIT_SECONDS.
+        After close(code) the closing handshake gets at most CLOSE_WAIT_SECONDS, then the
+        transport is aborted.
         """
         self._writer = asyncio.create_task(self._write())
         reader = asyncio.create_task(self._read())
@@ -165,7 +190,7 @@ class Connection:
         try:
             await asyncio.wait((reader, stopped), return_when=asyncio.FIRST_COMPLETED)
             if self._close_code is not None:
-                await asyncio.wait((self._writer,), timeout=CLOSE_WAIT_SECONDS)
+                await self._finish_close(self._writer)
         finally:
             self.stop()
             reader.cancel()
@@ -174,6 +199,22 @@ class Connection:
             exc = reader.exception()
             if exc is not None:
                 raise exc
+
+    async def _finish_close(self, writer: asyncio.Task[None]) -> None:
+        """Wait for the close frame and the client's reply until the window ends, then abort.
+
+        The abort does nothing to a transport that has already closed; it drops one whose
+        buffer a client that does not read never drains. The handler is still running, so the
+        connection keeps counting against the limits until its transport is gone.
+        """
+        window = asyncio.create_task(asyncio.sleep(CLOSE_WAIT_SECONDS))
+        try:
+            await asyncio.wait((writer, window), return_when=asyncio.FIRST_COMPLETED)
+            if self._abort is not None:
+                await window
+                self._abort()
+        finally:
+            window.cancel()
 
     async def _read(self) -> None:
         hub = self._state.hub
@@ -232,8 +273,14 @@ class Connection:
             self._shut()
 
 
-async def serve(websocket: Socket, host: str | None, state: WsState) -> None:
-    """Run one client connection. Never raises: errors are logged by type name only."""
+async def serve(
+    websocket: Socket, host: str | None, state: WsState, *, abort: Abort | None = None
+) -> None:
+    """Run one client connection. Never raises: errors are logged by type name only.
+
+    `abort` tears the transport down (see transport_aborter). However the handler ends, the
+    transport gets at most CLOSE_WAIT_SECONDS more to close on its own.
+    """
     key = ip_key(host)
     if not state.warned_shared_key and _is_shared_key(host, key):
         state.warned_shared_key = True
@@ -245,7 +292,7 @@ async def serve(websocket: Socket, host: str | None, state: WsState) -> None:
         except Exception as exc:
             log_exception(logger, "ws refuse", exc)
         return
-    conn = Connection(websocket, key, state)
+    conn = Connection(websocket, key, state, abort=abort)
     try:
         await websocket.accept()
         await conn.run()
@@ -256,6 +303,8 @@ async def serve(websocket: Socket, host: str | None, state: WsState) -> None:
         conn.detach()
         state.limits.connection_closed()
         conn.stop()
+        if abort is not None:
+            asyncio.get_running_loop().call_later(CLOSE_WAIT_SECONDS, abort)
 
 
 router: Final = APIRouter()
@@ -264,4 +313,5 @@ router: Final = APIRouter()
 @router.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket) -> None:
     state: WsState = websocket.app.state.ws
-    await serve(websocket, websocket.client.host if websocket.client else None, state)
+    host = websocket.client.host if websocket.client else None
+    await serve(websocket, host, state, abort=transport_aborter(websocket))

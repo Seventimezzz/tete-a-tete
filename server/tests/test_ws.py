@@ -6,6 +6,7 @@ import warnings
 from typing import Any
 
 import pytest
+from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
 
 from app import main as main_module
@@ -16,7 +17,14 @@ from app.logs import loop_exception_handler
 from app.main import create_app
 from app.protocol import ClientMessage
 from app.rooms import Conn, Hub
-from app.ws import OUTBOX_MAX_BYTES, OUTBOX_MAX_MESSAGES, Connection, WsState, serve
+from app.ws import (
+    OUTBOX_MAX_BYTES,
+    OUTBOX_MAX_MESSAGES,
+    Connection,
+    WsState,
+    serve,
+    transport_aborter,
+)
 from tests.fakes import FakeClock
 
 # Starlette 1.9 prefers httpx2 for TestClient; httpx works, and no new dependencies are added.
@@ -582,3 +590,124 @@ async def test_server_close_outside_a_room_releases_the_slot_once() -> None:
     assert len(hub.disconnects) == 1
     assert state.limits.seats("198.51.100.1") == 0
     assert state.limits.connections == 0
+
+
+# --- the transport behind a server-initiated close is torn down (QA-2)
+
+
+class AbortSpy:
+    """Stands for transport.abort; records how many connections were counted at each call."""
+
+    def __init__(self, state: WsState) -> None:
+        self._state = state
+        self.calls: list[int] = []
+
+    def __call__(self) -> None:
+        self.calls.append(self._state.limits.connections)
+
+
+@pytest.mark.usefixtures("fast_close")
+@pytest.mark.parametrize("stuck", [True, False], ids=["frame-stuck", "frame-left"])
+async def test_server_close_aborts_the_transport_at_the_end_of_the_window(stuck: bool) -> None:
+    """Whether or not the close frame left, the transport is aborted once the window ends,
+    while the connection still counts: the slot is not free before the transport is gone."""
+    state, _ = make_state(LimitConfig(msg_burst=1, msg_rate=0.0001))
+    sock = FakeSocket(stuck_send=stuck)
+    abort = AbortSpy(state)
+    task = asyncio.create_task(serve(sock, "198.51.100.1", state, abort=abort))
+    sock.push(PING)
+    sock.push(PING)  # over the burst: closed with 1008
+    await until(lambda: abort.calls != [])
+    assert abort.calls == [1]
+    await asyncio.wait_for(task, 1.0)
+    assert state.limits.connections == 0
+    await asyncio.sleep(ws_module.CLOSE_WAIT_SECONDS * 2)
+    assert len(abort.calls) <= 2  # at most the backstop after the handler, never more
+
+
+@pytest.mark.usefixtures("fast_close")
+async def test_handler_end_schedules_a_backstop_abort() -> None:
+    """Any end of the handler (here a failing hub) leaves the transport at most the window."""
+    clock = FakeClock()
+    limits = Limits(LimitConfig(), clock)
+    hub = ExplodingHub(secret=SECRET, clock=clock, limits=limits)
+    state = WsState(hub=hub, limits=limits, clock=clock)
+    sock = FakeSocket()
+    abort = AbortSpy(state)
+    task = asyncio.create_task(serve(sock, "198.51.100.1", state, abort=abort))
+    sock.push(PING)
+    await asyncio.wait_for(task, 1.0)
+    assert abort.calls == []
+    await until(lambda: abort.calls != [])
+    assert abort.calls == [0]
+
+
+async def test_client_close_does_not_wait_for_the_window() -> None:
+    state, _ = make_state()
+    sock = FakeSocket()
+    abort = AbortSpy(state)
+    task = asyncio.create_task(serve(sock, "198.51.100.1", state, abort=abort))
+    await until(lambda: sock.accepted)
+    sock.incoming.put_nowait({"type": "websocket.disconnect", "code": 1000})
+    await asyncio.wait_for(task, ws_module.CLOSE_WAIT_SECONDS / 2)
+    assert abort.calls == []
+
+
+class _Transport:
+    def __init__(self) -> None:
+        self.aborted = 0
+
+    def abort(self) -> None:
+        self.aborted += 1
+
+    def is_closing(self) -> bool:
+        return False
+
+
+class _UvicornProtocol:
+    def __init__(self) -> None:
+        self.transport = _Transport()
+
+    async def receive(self) -> dict[str, Any]:
+        return {}
+
+
+class _StarletteSocket:
+    def __init__(self, receive: Any) -> None:
+        self._receive = receive
+
+
+def test_transport_aborter_reaches_the_transport_behind_the_receive_callable() -> None:
+    protocol = _UvicornProtocol()
+    abort = transport_aborter(_StarletteSocket(protocol.receive))
+    assert abort is not None
+    abort()
+    assert protocol.transport.aborted == 1
+
+
+@pytest.mark.parametrize(
+    "receive",
+    [None, print, _UvicornProtocol.receive, _Transport().is_closing],
+    ids=["none", "builtin", "unbound", "no-transport"],
+)
+def test_transport_aborter_falls_back_to_none(receive: Any) -> None:
+    assert transport_aborter(_StarletteSocket(receive)) is None
+    assert transport_aborter(object()) is None
+
+
+def test_transport_aborter_is_none_under_the_test_client() -> None:
+    seen: list[object] = []
+    app = create_app(Settings(SECRET), clock=FakeClock())
+
+    @app.websocket("/probe")
+    async def probe(websocket: WebSocket) -> None:
+        seen.append(transport_aborter(websocket))
+        await websocket.close()
+
+    with (
+        TestClient(app) as client,
+        pytest.raises(WebSocketDisconnect),
+        client.websocket_connect("/probe"),
+    ):
+        pass
+    assert seen == [None]

@@ -165,12 +165,6 @@ def _server_side_states(server_port: int, client_port: int) -> list[str]:
     pytest.skip("no TCP table reader for this platform")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=TransportLingeredError,
-    reason="QA-2: после закрытия 4001 нечитающего клиента сервер не обрывает транспорт: "
-    "TCP остаётся ESTABLISHED и держит буфер, хотя слот IP и счётчик соединений уже освобождены",
-)
 async def test_closed_slow_reader_transport_is_torn_down(start: StartServer) -> None:
     server = start(limits=RAISED_LIMITS)
     sender = await Client.connect(server, forwarded_for="203.0.113.150", compression=False)
