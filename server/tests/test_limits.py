@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from app.limits import LimitConfig, Limits, TokenBucket, ip_key
+from app.limits import LimitConfig, Limits, OutboxLedger, TokenBucket, ip_key
 from tests.fakes import FakeClock
 
 KEY = "203.0.113.7"
@@ -144,3 +144,31 @@ def test_sweep_drops_empty_keys_and_state_repr_has_no_ip() -> None:
     limits.sweep()
     assert not any(KEY in repr(v) for v in vars(limits).values())
     assert limits.try_open(KEY)
+
+
+# --- outgoing queue bytes by key (M4)
+
+
+def test_outbox_ledger_totals_and_largest_per_key_and_overall() -> None:
+    ledger: OutboxLedger[str] = OutboxLedger()
+    ledger.change(KEY, "a", 100)
+    ledger.change(KEY, "b", 300)
+    ledger.change("198.51.100.1", "c", 200)
+    assert ledger.key_bytes(KEY) == 400
+    assert ledger.key_bytes("198.51.100.1") == 200
+    assert ledger.key_bytes("198.51.100.2") == 0
+    assert ledger.largest(KEY) == ("b", 300)
+    assert ledger.largest() == ("b", 300)
+    assert ledger.largest("198.51.100.2") is None
+    ledger.change(KEY, "b", -300)
+    assert ledger.largest(KEY) == ("a", 100)
+    assert ledger.largest() == ("c", 200)
+
+
+def test_outbox_ledger_forgets_empty_owners_and_keys_and_repr_has_no_key() -> None:
+    ledger: OutboxLedger[str] = OutboxLedger()
+    ledger.change(KEY, "a", 10)
+    assert KEY not in repr(ledger)
+    ledger.change(KEY, "a", -10)
+    assert ledger.largest() is None
+    assert not any(KEY in repr(v) for v in vars(ledger).values())

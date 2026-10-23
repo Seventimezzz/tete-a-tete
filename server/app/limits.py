@@ -174,3 +174,48 @@ class Limits:
         for key in list(self._key_bytes):
             if key not in self._seats and self._key_bytes[key].is_full(now):
                 del self._key_bytes[key]
+
+
+class OutboxLedger[T]:
+    """Bytes in the outgoing queues of connections, grouped by key: who holds the most.
+
+    Owners are compared by identity. An owner whose queue is empty and a key without owners
+    are forgotten at once, so no key outlives the queues of its connections.
+    """
+
+    def __init__(self) -> None:
+        self._owners: dict[str, dict[T, int]] = {}
+        self._totals: dict[str, int] = {}
+
+    def __repr__(self) -> str:
+        return f"OutboxLedger(keys={len(self._owners)})"
+
+    def change(self, key: str, owner: T, delta: int) -> None:
+        owners = self._owners.setdefault(key, {})
+        held = owners.get(owner, 0) + delta
+        if held > 0:
+            owners[owner] = held
+        else:
+            owners.pop(owner, None)
+        total = self._totals.get(key, 0) + delta
+        if owners and total > 0:
+            self._totals[key] = total
+        else:
+            self._owners.pop(key, None)
+            self._totals.pop(key, None)
+
+    def key_bytes(self, key: str) -> int:
+        return self._totals.get(key, 0)
+
+    def largest(self, key: str | None = None) -> tuple[T, int] | None:
+        """The owner with the most bytes, within one key or over all keys."""
+        if key is None:
+            groups = list(self._owners.values())
+        else:
+            groups = [self._owners[key]] if key in self._owners else []
+        best: tuple[T, int] | None = None
+        for owners in groups:
+            for owner, held in owners.items():
+                if best is None or held > best[1]:
+                    best = (owner, held)
+        return best

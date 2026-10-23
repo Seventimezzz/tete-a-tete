@@ -8,14 +8,14 @@ import asyncio
 import ipaddress
 from collections import deque
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
 
 from fastapi import APIRouter, WebSocket
 from starlette.websockets import WebSocketDisconnect, WebSocketDisconnected
 
 from app.clock import Clock
-from app.limits import UNKNOWN, Limits, TokenBucket, ip_key
+from app.limits import UNKNOWN, Limits, OutboxLedger, TokenBucket, ip_key
 from app.logs import log_exception, logger
 from app.protocol import (
     CLOSE_RATE_LIMIT,
@@ -30,6 +30,8 @@ from app.rooms import Hub
 # Above what the four other members of a room can send at once (4 x 200 messages of burst).
 OUTBOX_MAX_MESSAGES: Final = 1024
 OUTBOX_MAX_BYTES: Final = 2_097_152
+# All outgoing queues of one IP key: two full queues. Over it, the key's largest queue is closed.
+KEY_OUTBOX_MAX_BYTES: Final = 4_194_304
 CLOSE_WAIT_SECONDS: Final = 1.0
 SHARED_KEY_WARNING: Final = "X-Forwarded-For отсутствует, лимиты общие"
 
@@ -60,6 +62,7 @@ class WsState:
     clock: Clock
     closed_by_limits: int = 0  # refused handshakes and closes with 1008 or 4001
     warned_shared_key: bool = False
+    outboxes: OutboxLedger["Connection"] = field(default_factory=OutboxLedger)
 
 
 def _is_shared_key(host: str | None, key: str) -> bool:
@@ -132,16 +135,44 @@ class Connection:
         if not self._open:
             return
         size = len(text.encode())
-        if (
-            len(self._outbox) >= OUTBOX_MAX_MESSAGES
-            or self._outbox_bytes + size > OUTBOX_MAX_BYTES
-            or not self._state.limits.reserve(size)
-        ):
+        if len(self._outbox) >= OUTBOX_MAX_MESSAGES or self._outbox_bytes + size > OUTBOX_MAX_BYTES:
             self.close(CLOSE_SLOW_READER)
+            return
+        if not self._make_room(size):
             return
         self._outbox.append((text, size))
         self._outbox_bytes += size
+        self._state.outboxes.change(self.key, self, size)
         self._wake.set()
+
+    def _make_room(self, size: int) -> bool:
+        """Fit `size` more bytes into the key's and the global queue budgets and reserve them.
+
+        Over a budget, the connection holding the most queued bytes is the one not reading: it
+        is closed with 4001 if that frees enough, and this one keeps the message. Otherwise
+        (this one holds the most, or the bytes sit in wait queues, which are nobody's outbox)
+        this connection is closed, as before.
+        """
+        outboxes, limits = self._state.outboxes, self._state.limits
+        over_key = outboxes.key_bytes(self.key) + size - KEY_OUTBOX_MAX_BYTES
+        if over_key > 0 and not self._close_hoarder(outboxes.largest(self.key), over_key):
+            return False
+        over = limits.queued_bytes + size - limits.config.max_queued_bytes
+        if over > 0 and not self._close_hoarder(outboxes.largest(), over):
+            return False
+        if not limits.reserve(size):
+            self.close(CLOSE_SLOW_READER)
+            return False
+        return True
+
+    def _close_hoarder(self, largest: "tuple[Connection, int] | None", needed: int) -> bool:
+        """Close the holder of the largest queue if it is another connection and closing it
+        frees `needed` bytes; else close this one. True if this one stays open."""
+        if largest is None or largest[0] is self or largest[1] < needed:
+            self.close(CLOSE_SLOW_READER)
+            return False
+        largest[0].close(CLOSE_SLOW_READER)
+        return True
 
     def close(self, code: int) -> None:
         """Stop reading and sending; the writer sends the close frame."""
@@ -175,6 +206,7 @@ class Connection:
     def _shut(self) -> None:
         self._open = False
         self._state.limits.free(self._outbox_bytes)
+        self._state.outboxes.change(self.key, self, -self._outbox_bytes)
         self._outbox.clear()
         self._outbox_bytes = 0
         self._stopped.set()
@@ -265,6 +297,7 @@ class Connection:
                     self._outbox.popleft()
                     self._outbox_bytes -= size
                     self._state.limits.free(size)
+                    self._state.outboxes.change(self.key, self, -size)
                 if not self._open:
                     if self._close_code is not None:
                         await self._ws.close(self._close_code)

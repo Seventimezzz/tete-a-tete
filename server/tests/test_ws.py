@@ -18,6 +18,7 @@ from app.main import create_app
 from app.protocol import ClientMessage
 from app.rooms import Conn, Hub
 from app.ws import (
+    KEY_OUTBOX_MAX_BYTES,
     OUTBOX_MAX_BYTES,
     OUTBOX_MAX_MESSAGES,
     Connection,
@@ -766,3 +767,110 @@ async def test_readers_yield_so_the_writer_drains_between_frames(
 
 def test_outbox_limits_are_1024_messages_and_2_mib() -> None:
     assert (OUTBOX_MAX_MESSAGES, OUTBOX_MAX_BYTES) == (1024, 2 * 1024 * 1024)
+
+
+# --- the hoarder of queue bytes is closed, not whoever enqueues next (M4)
+
+CHUNK = "x" * 65_536
+
+
+def _fill(conn: Connection, chunks: int) -> None:
+    for _ in range(chunks):
+        conn.send(CHUNK)
+
+
+def test_key_outbox_cap_is_4_mib() -> None:
+    assert KEY_OUTBOX_MAX_BYTES == 4 * 1024 * 1024
+
+
+async def test_key_outbox_cap_closes_the_keys_largest_outbox() -> None:
+    state, _ = make_state()
+    first = Connection(FakeSocket(stuck_send=True), "k", state)
+    second = Connection(FakeSocket(stuck_send=True), "k", state)
+    receiver = Connection(FakeSocket(stuck_send=True), "k", state)
+    elsewhere = Connection(FakeSocket(stuck_send=True), "other", state)
+    _fill(first, 30)
+    _fill(second, 29)
+    _fill(elsewhere, 31)  # another key does not count against "k"
+    room = KEY_OUTBOX_MAX_BYTES // len(CHUNK) - 59
+    _fill(receiver, room)
+    assert not any(c.closed for c in (first, second, receiver, elsewhere))
+    receiver.send(CHUNK)  # over 4 MiB for the key
+    assert first.closed
+    assert not second.closed
+    assert not receiver.closed
+    assert not elsewhere.closed
+    assert state.closed_by_limits == 1
+    assert state.limits.queued_bytes == (29 + room + 1 + 31) * len(CHUNK)
+
+
+async def test_key_outbox_cap_closes_the_receiver_when_it_holds_the_most() -> None:
+    state, _ = make_state()
+    small = Connection(FakeSocket(stuck_send=True), "k", state)
+    big = Connection(FakeSocket(stuck_send=True), "k", state)
+    third = Connection(FakeSocket(stuck_send=True), "k", state)
+    _fill(small, 3)
+    _fill(third, 30)
+    _fill(big, 31)  # 64 chunks, 4 MiB exactly: still fits
+    assert not any(c.closed for c in (small, big, third))
+    big.send(CHUNK)  # its own queue stays under 2 MiB, the key goes over 4 MiB
+    assert big.closed
+    assert not small.closed
+    assert not third.closed
+
+
+async def test_global_budget_closes_the_largest_outbox_not_the_receiver() -> None:
+    state, _ = make_state(LimitConfig(max_queued_bytes=100_000))
+    hoarder = Connection(FakeSocket(stuck_send=True), "a", state)
+    receiver = Connection(FakeSocket(stuck_send=True), "b", state)
+    for _ in range(3):
+        hoarder.send("x" * 30_000)
+    receiver.send("y" * 5_000)
+    assert not hoarder.closed
+    receiver.send("y" * 20_000)  # 115 000 > 100 000
+    assert hoarder.closed
+    assert not receiver.closed
+    assert state.closed_by_limits == 1
+    assert state.limits.queued_bytes == 25_000
+
+
+async def test_global_budget_closes_the_receiver_when_it_holds_the_most() -> None:
+    state, _ = make_state(LimitConfig(max_queued_bytes=100_000))
+    other = Connection(FakeSocket(stuck_send=True), "a", state)
+    receiver = Connection(FakeSocket(stuck_send=True), "b", state)
+    other.send("x" * 30_000)
+    receiver.send("y" * 60_000)
+    receiver.send("y" * 20_000)
+    assert receiver.closed
+    assert not other.closed
+    assert state.limits.queued_bytes == 30_000
+
+
+async def test_queue_bytes_held_by_waiting_places_close_the_receiver() -> None:
+    """Bytes in wait queues are nobody's outbox: as before, the receiver is closed."""
+    state, _ = make_state(LimitConfig(max_queued_bytes=100_000))
+    assert state.limits.reserve(95_000)  # stands for signals queued for waiting places
+    small = Connection(FakeSocket(stuck_send=True), "a", state)
+    small.send("x" * 1_000)
+    receiver = Connection(FakeSocket(stuck_send=True), "b", state)
+    receiver.send("y" * 10_000)
+    assert receiver.closed
+    assert not small.closed
+
+
+async def test_ledger_follows_sends_writes_and_closes() -> None:
+    state, _ = make_state()
+    sock = FakeSocket()
+    conn = Connection(sock, "k", state)
+    stuck = Connection(FakeSocket(stuck_send=True), "k", state)
+    run = asyncio.create_task(conn.run())
+    conn.send('"a"')
+    stuck.send('"b"')
+    assert state.outboxes.key_bytes("k") == 6
+    await until(lambda: sock.sent == ['"a"'])
+    assert state.outboxes.key_bytes("k") == 3
+    stuck.close(4001)
+    assert state.outboxes.key_bytes("k") == 0
+    assert state.outboxes.largest() is None
+    sock.incoming.put_nowait({"type": "websocket.disconnect", "code": 1000})
+    await asyncio.wait_for(run, 1.0)
