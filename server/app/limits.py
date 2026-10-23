@@ -66,6 +66,10 @@ class TokenBucket:
         self._tokens -= amount
         return True
 
+    def available(self, now: float) -> float:
+        self._refill(now)
+        return self._tokens
+
     def is_full(self, now: float) -> bool:
         self._refill(now)
         return self._tokens >= self._capacity

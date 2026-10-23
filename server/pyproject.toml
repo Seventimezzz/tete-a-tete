@@ -5,7 +5,7 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     "fastapi>=0.156.7",
     "pydantic>=2",
-    "uvicorn[standard]>=0.54.0",
+    "uvicorn[standard]==0.54.0",  # exact: app/wsproto.py subclasses its internals
 ]
 
 [tool.uv]

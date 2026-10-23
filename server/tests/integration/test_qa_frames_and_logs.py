@@ -167,7 +167,8 @@ def _server_side_states(server_port: int, client_port: int) -> list[str]:
 
 async def test_closed_slow_reader_transport_is_torn_down(start: StartServer) -> None:
     server = start(limits=RAISED_LIMITS)
-    sender = await Client.connect(server, forwarded_for="203.0.113.150", compression=False)
+    # The sender compresses: its 12 MB of "x" stay far under the raw budget of a connection.
+    sender = await Client.connect(server, forwarded_for="203.0.113.150", compression=True)
     reader = await Client.connect(
         server,
         forwarded_for="203.0.113.151",

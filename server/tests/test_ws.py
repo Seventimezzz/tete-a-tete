@@ -6,7 +6,6 @@ import warnings
 from typing import Any
 
 import pytest
-from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
 
 from app import main as main_module
@@ -18,13 +17,15 @@ from app.main import create_app
 from app.protocol import ClientMessage
 from app.rooms import Conn, Hub
 from app.ws import (
+    ABORT_EXTENSION,
     KEY_OUTBOX_MAX_BYTES,
+    NO_ABORT_WARNING,
     OUTBOX_MAX_BYTES,
     OUTBOX_MAX_MESSAGES,
     Connection,
     WsState,
     serve,
-    transport_aborter,
+    transport_abort,
 )
 from tests.fakes import FakeClock
 
@@ -654,64 +655,51 @@ async def test_client_close_does_not_wait_for_the_window() -> None:
     assert abort.calls == []
 
 
-class _Transport:
+class _Abort:
     def __init__(self) -> None:
-        self.aborted = 0
+        self.calls = 0
 
-    def abort(self) -> None:
-        self.aborted += 1
-
-    def is_closing(self) -> bool:
-        return False
+    def __call__(self) -> None:
+        self.calls += 1
 
 
-class _UvicornProtocol:
-    def __init__(self) -> None:
-        self.transport = _Transport()
-
-    async def receive(self) -> dict[str, Any]:
-        return {}
-
-
-class _StarletteSocket:
-    def __init__(self, receive: Any) -> None:
-        self._receive = receive
-
-
-def test_transport_aborter_reaches_the_transport_behind_the_receive_callable() -> None:
-    protocol = _UvicornProtocol()
-    abort = transport_aborter(_StarletteSocket(protocol.receive))
-    assert abort is not None
-    abort()
-    assert protocol.transport.aborted == 1
+def test_transport_abort_comes_from_the_scope_extension() -> None:
+    abort = _Abort()
+    found = transport_abort({"extensions": {ABORT_EXTENSION: {"abort": abort}}})
+    assert found is abort
 
 
 @pytest.mark.parametrize(
-    "receive",
-    [None, print, _UvicornProtocol.receive, _Transport().is_closing],
-    ids=["none", "builtin", "unbound", "no-transport"],
+    "scope",
+    [
+        {},
+        {"extensions": None},
+        {"extensions": {}},
+        {"extensions": {ABORT_EXTENSION: None}},
+        {"extensions": {ABORT_EXTENSION: {"abort": "not callable"}}},
+        {"extensions": {"websocket.http.response": {}}},
+    ],
+    ids=["no-extensions", "none", "empty", "hook-none", "not-callable", "other-extension"],
 )
-def test_transport_aborter_falls_back_to_none(receive: Any) -> None:
-    assert transport_aborter(_StarletteSocket(receive)) is None
-    assert transport_aborter(object()) is None
+def test_transport_abort_falls_back_to_none(scope: dict[str, Any]) -> None:
+    assert transport_abort(scope) is None
 
 
-def test_transport_aborter_is_none_under_the_test_client() -> None:
-    seen: list[object] = []
-    app = create_app(Settings(SECRET), clock=FakeClock())
-
-    @app.websocket("/probe")
-    async def probe(websocket: WebSocket) -> None:
-        seen.append(transport_aborter(websocket))
-        await websocket.close()
-
-    with (
-        TestClient(app) as client,
-        pytest.raises(WebSocketDisconnect),
-        client.websocket_connect("/probe"),
-    ):
-        pass
-    assert seen == [None]
+def test_no_abort_under_the_test_client_warns_once_without_details(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """L2: without our uvicorn protocol the abort is missing; one WARNING says so."""
+    caplog.set_level(logging.WARNING)
+    with make_client(host="203.0.113.7") as client:
+        for _ in range(2):
+            with client.websocket_connect("/ws") as ws:
+                ws.send_text(PING)
+                ws.receive_json()
+    warnings = [r for r in caplog.records if r.getMessage() == NO_ABORT_WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].levelno == logging.WARNING
+    assert "203.0.113.7" not in caplog.text
+    assert "--ws app.wsproto:TeteWebSocketProtocol" in NO_ABORT_WARNING
 
 
 # --- a burst from several members does not overflow a reading member's outbox (M1)

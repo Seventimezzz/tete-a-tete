@@ -146,7 +146,8 @@ async def test_message_flood_closed_1008_others_still_fast(server: RunningServer
 
 async def test_slow_reader_closed_4001(start: StartServer) -> None:
     server = start(limits=RAISED_LIMITS, env={"TETE_TEST_CLOSE_WAIT": SLOW_READER_CLOSE_WAIT})
-    sender = await Client.connect(server, forwarded_for="203.0.113.20", compression=False)
+    # The sender compresses: its 12 MB of "x" stay far under the raw budget of a connection.
+    sender = await Client.connect(server, forwarded_for="203.0.113.20", compression=True)
     reader = await Client.connect(
         server,
         forwarded_for="203.0.113.21",

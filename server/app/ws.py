@@ -62,6 +62,7 @@ class WsState:
     clock: Clock
     closed_by_limits: int = 0  # refused handshakes and closes with 1008 or 4001
     warned_shared_key: bool = False
+    warned_no_abort: bool = False
     close_wait: float | None = None  # integration tests only: replaces CLOSE_WAIT_SECONDS
 
     @property
@@ -87,23 +88,29 @@ def _is_shared_key(host: str | None, key: str) -> bool:
 
 type Abort = Callable[[], None]
 
+# ASGI scope extension set by app.wsproto.TeteWebSocketProtocol: {"abort": <transport.abort>}.
+ABORT_EXTENSION: Final = "tete.transport.abort"
+NO_ABORT_WARNING: Final = (
+    "обрыв транспорта недоступен: uvicorn запущен без --ws app.wsproto:TeteWebSocketProtocol"
+)
 
-def transport_aborter(websocket: object) -> Abort | None:
-    """`abort` of the TCP transport behind a Starlette WebSocket served by uvicorn, or None.
+
+def transport_abort(scope: Mapping[str, Any]) -> Abort | None:
+    """The abort of the TCP transport behind a WebSocket, from its ASGI scope, or None.
 
     ASGI has no way to drop a connection: after `websocket.close` uvicorn closes the transport
     gracefully, and asyncio then waits for the send buffer to drain, without a time limit. A
-    client that does not read keeps such a socket open forever. Starlette keeps the ASGI
-    `receive`, which in uvicorn is a method of its protocol object, and that object holds the
-    transport. Anything else (another server, the test client, a wrapping middleware) gives
-    None, and the connection is closed the ASGI way only.
+    client that does not read keeps such a socket open forever. Our uvicorn protocol puts the
+    transport's abort into the scope; under another server or the test client it is not
+    there, and the connection is closed the ASGI way only (ws_endpoint warns once). The scope
+    passes unchanged through uvicorn's middlewares, so the hook works at any log level: the
+    earlier lookup through the `receive` callable broke under --log-level trace, where
+    uvicorn wraps `receive` to log messages.
     """
-    owner = getattr(getattr(websocket, "_receive", None), "__self__", None)
-    transport = getattr(owner, "transport", None)
-    abort = getattr(transport, "abort", None)
-    if callable(abort) and callable(getattr(transport, "is_closing", None)):
-        return abort  # type: ignore[no-any-return]
-    return None
+    extensions = scope.get("extensions")
+    hook = extensions.get(ABORT_EXTENSION) if isinstance(extensions, Mapping) else None
+    abort = hook.get("abort") if isinstance(hook, Mapping) else None
+    return abort if callable(abort) else None
 
 
 class Connection:
@@ -323,7 +330,7 @@ async def serve(
 ) -> None:
     """Run one client connection. Never raises: errors are logged by type name only.
 
-    `abort` tears the transport down (see transport_aborter). However the handler ends, the
+    `abort` tears the transport down (see transport_abort). However the handler ends, the
     transport gets at most the close window more to close on its own.
     """
     key = ip_key(host)
@@ -359,4 +366,8 @@ router: Final = APIRouter()
 async def ws_endpoint(websocket: WebSocket) -> None:
     state: WsState = websocket.app.state.ws
     host = websocket.client.host if websocket.client else None
-    await serve(websocket, host, state, abort=transport_aborter(websocket))
+    abort = transport_abort(websocket.scope)
+    if abort is None and not state.warned_no_abort:
+        state.warned_no_abort = True
+        logger.warning(NO_ABORT_WARNING)
+    await serve(websocket, host, state, abort=abort)

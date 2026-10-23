@@ -63,6 +63,8 @@ _UVICORN_FLAGS: Final = (
     "--forwarded-allow-ips",
     "127.0.0.1",
     "--no-access-log",
+    "--ws",
+    "app.wsproto:TeteWebSocketProtocol",
 )
 
 
@@ -127,12 +129,23 @@ def _read_output(output: IO[bytes]) -> str:
 
 
 def start_server(
-    *, app: str = "app.main:app", factory: bool = False, env: Mapping[str, str] | None = None
+    *,
+    app: str = "app.main:app",
+    factory: bool = False,
+    env: Mapping[str, str] | None = None,
+    ping_seconds: float | None = None,
 ) -> RunningServer:
     """Start `python -m uvicorn <app>` with the flags from CLAUDE.md on a free port and wait
-    until the port accepts connections (uvicorn binds it after the lifespan startup)."""
+    until the port accepts connections (uvicorn binds it after the lifespan startup).
+
+    `ping_seconds` replaces the 15 s of --ws-ping-interval and --ws-ping-timeout, for tests
+    of the keepalive; every other flag stays as in production."""
     port = free_port()
-    args = [sys.executable, "-m", "uvicorn", app, *_UVICORN_FLAGS, "--port", str(port)]
+    flags = list(_UVICORN_FLAGS)
+    if ping_seconds is not None:
+        for flag in ("--ws-ping-interval", "--ws-ping-timeout"):
+            flags[flags.index(flag) + 1] = str(ping_seconds)
+    args = [sys.executable, "-m", "uvicorn", app, *flags, "--port", str(port)]
     if factory:
         args.append("--factory")
     full_env = {k: v for k, v in os.environ.items() if not k.startswith(_TEST_ENV_PREFIX)}
