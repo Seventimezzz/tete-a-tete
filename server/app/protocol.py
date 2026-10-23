@@ -26,9 +26,10 @@ NAME_MAX_LENGTH: Final = 32
 RESUME_TOKEN_MAX_LENGTH: Final = 128
 PAIR_MS_MAX: Final = 3_600_000
 PAIR_RESTARTS_MAX: Final = 100
-# The largest message either side sends: --ws-max-size for incoming frames, and the server's
-# own limit for what it forwards.
+# The largest incoming message (--ws-max-size). A forwarded signal is its frame with "to"
+# renamed "from", so the server sends at most SIGNAL_FORWARD_GROWTH bytes more.
 MAX_MESSAGE_BYTES: Final = 65_536
+SIGNAL_FORWARD_GROWTH: Final = len('"from"') - len('"to"')
 # `data` of a signal: the object itself is depth 1, each nested object or array adds 1.
 # Deeper data parses but cannot be serialized back for forwarding (about 98 levels).
 MAX_SIGNAL_DATA_DEPTH: Final = 32
@@ -286,11 +287,12 @@ def parse_client_message(raw: str | bytes) -> ClientMessage:
 
 
 def _keep_raw_data(message: ClientSignal, raw: str | bytes) -> bool:
-    """Keep the text of `data` for forwarding. False if the forwarded signal would be larger
-    than MAX_MESSAGE_BYTES: "to" becomes "from", two bytes more than the frame."""
+    """Keep the text of `data` for forwarding. False if the forwarded signal would be longer
+    than a frame of MAX_MESSAGE_BYTES gives: only if the text could not be kept and re-serializing
+    grew it, or the frame itself was over the limit."""
     message._raw_data = _raw_member(raw if isinstance(raw, str) else raw.decode(), "data")
     forwarded = dump_forwarded_signal(ID_ALPHABET[0] * PEER_ID_LENGTH, message)
-    return len(forwarded.encode()) <= MAX_MESSAGE_BYTES
+    return len(forwarded.encode()) <= MAX_MESSAGE_BYTES + SIGNAL_FORWARD_GROWTH
 
 
 _JSON_SPACE: Final = re.compile(r"[ \t\n\r]*")

@@ -11,6 +11,7 @@ from app.protocol import (
     ID_ALPHABET,
     MAX_MESSAGE_BYTES,
     MAX_SIGNAL_DATA_DEPTH,
+    SIGNAL_FORWARD_GROWTH,
     BadRequestError,
     ClientCreate,
     ClientJoin,
@@ -330,12 +331,13 @@ def _signal_frame_of_size(total: int) -> str:
     return frame
 
 
-@pytest.mark.parametrize("total", [MAX_MESSAGE_BYTES - 1, MAX_MESSAGE_BYTES])
-def test_signal_that_would_be_forwarded_over_the_message_limit_is_bad_request(total: int) -> None:
+def test_signal_frame_at_the_limit_is_forwarded_two_bytes_longer() -> None:
+    """uvicorn lets in 65 536 bytes; "to" -> "from" adds two, and that is all it adds."""
+    text = _forward(_signal_frame_of_size(MAX_MESSAGE_BYTES))
+    assert len(text.encode()) == MAX_MESSAGE_BYTES + SIGNAL_FORWARD_GROWTH == 65_538
+
+
+def test_signal_that_would_be_forwarded_over_the_bound_is_bad_request() -> None:
+    """Only a frame over --ws-max-size gets here, but parsing does not rely on uvicorn."""
     with pytest.raises(BadRequestError):
-        parse_client_message(_signal_frame_of_size(total))
-
-
-def test_signal_forwarded_at_exactly_the_message_limit_parses() -> None:
-    text = _forward(_signal_frame_of_size(MAX_MESSAGE_BYTES - 2))
-    assert len(text.encode()) == MAX_MESSAGE_BYTES
+        parse_client_message(_signal_frame_of_size(MAX_MESSAGE_BYTES + 1))

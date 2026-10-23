@@ -1,4 +1,3 @@
-import json
 from typing import Any
 
 import pytest
@@ -7,7 +6,6 @@ from pydantic import JsonValue
 from app.limits import LimitConfig, Limits
 from app.protocol import (
     ID_ALPHABET,
-    MAX_MESSAGE_BYTES,
     ClientCreate,
     ClientJoin,
     ClientLeave,
@@ -17,7 +15,6 @@ from app.protocol import (
     ClientPing,
     ClientSignal,
     NetInfo,
-    parse_client_message,
 )
 from app.rooms import Hub
 from app.tokens import verify_token
@@ -315,30 +312,3 @@ def test_disconnected_releases_seat() -> None:
     assert limits.try_open("k")
     hub.disconnected(FakeConn("k"))
     assert limits.seats("k") == 0
-
-
-# --- size of a forwarded signal (QA-3)
-
-
-def _signal_of_size(to: str, total: int) -> ClientSignal:
-    """A parsed client signal whose frame is exactly `total` bytes."""
-    head = f'{{"type":"signal","to":"{to}","data":{{"sdp":"'
-    frame = head + "s" * (total - len(head) - len('"}}')) + '"}}'
-    assert len(frame.encode()) == total
-    message = parse_client_message(frame)
-    assert isinstance(message, ClientSignal)
-    return message
-
-
-def test_forwarded_signal_of_exactly_the_message_limit_is_delivered() -> None:
-    """A frame two bytes under the limit leaves at the limit: "to" becomes "from"."""
-    hub = make_hub()
-    a, b = FakeConn("a"), FakeConn("b")
-    join(hub, a)
-    join(hub, b)
-    hub.handle(a, _signal_of_size(joined(b)["selfId"], MAX_MESSAGE_BYTES - 2))
-    assert a.of_type("error") == []
-    [got] = b.of_type("signal")
-    assert len(json.dumps(got, ensure_ascii=False, separators=(",", ":")).encode()) == (
-        MAX_MESSAGE_BYTES
-    )
