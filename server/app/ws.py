@@ -304,9 +304,11 @@ class Connection:
                     return
         except _GONE:
             self._shut()
+            self.detach()  # the client is gone: its place waits from now on
         except Exception as exc:
             log_exception(logger, "ws writer", exc)
             self._shut()
+            self.detach()
 
 
 async def serve(

@@ -874,3 +874,31 @@ async def test_ledger_follows_sends_writes_and_closes() -> None:
     assert state.outboxes.largest() is None
     sock.incoming.put_nowait({"type": "websocket.disconnect", "code": 1000})
     await asyncio.wait_for(run, 1.0)
+
+
+# --- a writer that finds the client gone reports it at once (minor)
+
+
+class GoneSocket(FakeSocket):
+    """The client vanished: sending fails, and the receive side has not noticed yet."""
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__()
+        self._error = error
+
+    async def send_text(self, data: str) -> None:
+        raise self._error
+
+
+@pytest.mark.parametrize(
+    "error", [OSError("gone"), WebSocketDisconnect(1006), ValueError("broken")]
+)
+async def test_writer_failure_reports_the_disconnect(error: BaseException) -> None:
+    state, hub = make_state()
+    conn = Connection(GoneSocket(error), "k", state)
+    run = asyncio.create_task(conn.run())
+    conn.send('"x"')
+    await asyncio.wait_for(run, 1.0)
+    assert hub.disconnects == [conn]
+    conn.detach()
+    assert hub.disconnects == [conn]  # once
