@@ -85,11 +85,6 @@ def errors(conn: FakeConn) -> list[str]:
 # --- privacy of models (spec "Логи": `name` in Pydantic models is repr=False)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-1: name участника виден в repr/str моделей протокола (ClientCreate, ClientJoin, "
-    "PeerInfo, ServerPeerJoined, ServerJoined); спецификация требует repr=False для name",
-)
 def test_model_repr_and_str_hide_the_name() -> None:
     peer = PeerInfo(id="abcdefgh", name=NAME, muted=False)
     models = [

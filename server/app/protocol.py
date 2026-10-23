@@ -134,20 +134,20 @@ class Route(_ClientModel):
 
 class PeerInfo(_ServerModel):
     id: PeerId
-    name: Name
+    name: Name = Field(repr=False)
     muted: bool
 
 
 class ClientCreate(_ClientModel):
     type: Literal["create"]
-    name: Name
+    name: Name = Field(repr=False)
     net: NetInfo
 
 
 class ClientJoin(_ClientModel):
     type: Literal["join"]
     room_id: RoomId = Field(repr=False)
-    name: Name
+    name: Name = Field(repr=False)
     net: NetInfo
     resume_token: ResumeToken | None = Field(default=None, repr=False)
 
@@ -194,7 +194,7 @@ class ServerJoined(_ServerModel):
 class ServerPeerJoined(_ServerModel):
     type: Literal["peer-joined"] = "peer-joined"
     id: PeerId
-    name: Name
+    name: Name = Field(repr=False)
 
 
 class ServerPeerLeft(_ServerModel):
