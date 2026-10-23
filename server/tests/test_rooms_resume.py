@@ -635,3 +635,46 @@ def test_random_churn_returns_counters_to_zero() -> None:
     assert sum(c.closed == CLOSE_REPLACED for c in churn.seen) > 0
     assert sum(len(c.of_type("peer-left")) for c in churn.seen) > 10
     assert max_queued > 0
+
+
+def test_queued_signals_from_senders_who_left_are_dropped_on_resume() -> None:
+    """Signals queued by a peer that is gone by the time of the resume are not delivered:
+    the addressee would start negotiating with someone who is not in its `peers`."""
+    env = make_env()
+    a, b, c, d = env.open(), env.open(), env.open(), env.open()
+    for conn in (a, b, c, d):
+        join(env, conn)
+    a_id, b_id, c_id, d_id = (self_id(x) for x in (a, b, c, d))
+    env.drop(d)  # the addressee waits
+    signal(env, a, d_id, {"from": "a-left"})
+    signal(env, b, d_id, {"from": "b-stays"})
+    signal(env, c, d_id, {"from": "c-expired"})
+    signal(env, b, d_id, {"from": "b-stays-2"})
+    env.hub.handle(a, ClientLeave(type="leave"))  # left for good
+    env.drop(c)
+    # c's place is freed by the sweep while d's still waits: c's wait is made to end first.
+    env.hub._rooms[ROOM].peers[c_id].disconnected_at = env.clock.now() - 15.0
+    env.hub.sweep()
+    assert set(env.hub._rooms[ROOM].peers) == {b_id, d_id}
+    d2 = env.open()
+    join(env, d2, token=token(d))
+    assert joined(d2)["resumed"] is True
+    assert [m["from"] for m in d2.of_type("signal")] == [b_id, b_id]
+    assert signals_data(d2) == [{"from": "b-stays"}, {"from": "b-stays-2"}]
+    assert env.limits.queued_bytes == 0
+    assert a_id not in {m["from"] for m in d2.of_type("signal")}
+    assert c_id not in {m["from"] for m in d2.of_type("signal")}
+
+
+def test_queued_signal_from_a_waiting_sender_is_kept() -> None:
+    env = make_env()
+    a, b = env.open(), env.open()
+    join(env, a)
+    join(env, b)
+    a_id, b_id = self_id(a), self_id(b)
+    env.drop(b)
+    signal(env, a, b_id, {"n": 1})
+    env.drop(a)  # the sender waits too: still in the room
+    b2 = env.open()
+    join(env, b2, token=token(b))
+    assert [m["from"] for m in b2.of_type("signal")] == [a_id]

@@ -62,7 +62,8 @@ class Peer:
     net: NetInfo = field(repr=False)
     joined_at: float
     disconnected_at: float | None = None
-    queue: list[str] = field(default_factory=list, repr=False)  # signals while waiting
+    # Signals while waiting: (sender id, ready JSON).
+    queue: list[tuple[str, str]] = field(default_factory=list, repr=False)
     queue_bytes: int = field(default=0, repr=False)  # reserved in Limits for the queue
     queue_from: dict[str, int] = field(default_factory=dict, repr=False)  # sender id -> count
     seat_key: str | None = field(default=None, repr=False)  # IP key whose slot a waiting seat holds
@@ -266,8 +267,10 @@ class Hub:
         peer.net = net  # the name stays
         self._seats[id(conn)] = (room.id, peer.id)
         self._send_joined(conn, room, peer, resumed=True)
-        for text in peer.queue:
-            conn.send(text)
+        for sender_id, text in peer.queue:
+            # A sender who has left since is not in `peers` of this joined: drop its signals.
+            if sender_id in room.peers:
+                conn.send(text)
         self._drop_queue(peer)
 
     def _send_joined(self, conn: Conn, room: Room, peer: Peer, *, resumed: bool) -> None:
@@ -350,7 +353,7 @@ class Hub:
             or not self._limits.reserve(size)
         ):
             return
-        target.queue.append(text)
+        target.queue.append((sender_id, text))
         target.queue_bytes += size
         target.queue_from[sender_id] = target.queue_from.get(sender_id, 0) + 1
 
