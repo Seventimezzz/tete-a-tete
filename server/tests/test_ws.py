@@ -533,3 +533,52 @@ async def test_handler_exception_logged_by_type_only(caplog: pytest.LogCaptureFi
         assert leak not in caplog.text
     assert hub.disconnects != []
     assert limits.connections == 0
+
+
+# --- a connection the server closes is gone for the hub at once (QA-4)
+
+
+@pytest.fixture
+def slow_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ws_module, "CLOSE_WAIT_SECONDS", 0.5)
+
+
+@pytest.mark.usefixtures("slow_close")
+async def test_server_close_starts_the_wait_at_once_and_reports_once() -> None:
+    state, hub = make_state(LimitConfig(msg_burst=2, msg_rate=0.0001))
+    a, b = FakeSocket(), FakeSocket(stuck_send=True)  # b never reads: its close frame hangs
+    task_a = asyncio.create_task(serve(a, "198.51.100.1", state))
+    a.push(create_msg())
+    await until(lambda: len(a.sent) == 1)
+    task_b = asyncio.create_task(serve(b, "198.51.100.2", state))
+    b.push(join_msg(a.messages()[0]["roomId"]))
+    await until(lambda: len(hub.handled) == 2)
+    conn_b = hub.handled[1][0]
+    b.push(PING)
+    b.push(PING)  # over the burst of 2: closed with 1008
+    await until(lambda: hub.disconnects != [])
+    assert not task_b.done()  # the handler still waits for the close frame
+    assert hub.disconnects == [conn_b]
+    assert hub.stats().waiting == 1
+    assert state.limits.connections == 2  # the connection itself is not closed yet
+    await asyncio.wait_for(task_b, 2.0)
+    assert hub.disconnects == [conn_b]  # not reported again by the handler
+    assert state.limits.connections == 1
+    assert state.limits.seats("198.51.100.2") == 1  # the waiting place keeps the slot
+    a.incoming.put_nowait({"type": "websocket.disconnect", "code": 1000})
+    await asyncio.wait_for(task_a, 2.0)
+    assert state.limits.connections == 0
+
+
+@pytest.mark.usefixtures("fast_close")
+async def test_server_close_outside_a_room_releases_the_slot_once() -> None:
+    state, hub = make_state(LimitConfig(msg_burst=1, msg_rate=0.0001, seats_per_key=1))
+    sock = FakeSocket()
+    task = asyncio.create_task(serve(sock, "198.51.100.1", state))
+    sock.push(PING)
+    sock.push(PING)
+    await asyncio.wait_for(task, 2.0)
+    assert sock.closed_with == 1008
+    assert len(hub.disconnects) == 1
+    assert state.limits.seats("198.51.100.1") == 0
+    assert state.limits.connections == 0

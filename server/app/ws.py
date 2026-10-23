@@ -94,6 +94,7 @@ class Connection:
         self._wake = asyncio.Event()
         self._stopped = asyncio.Event()
         self._writer: asyncio.Task[None] | None = None
+        self._detached = False
 
     def __repr__(self) -> str:
         return f"Connection(open={self._open}, queued={len(self._outbox)})"
@@ -126,6 +127,19 @@ class Connection:
             self._state.closed_by_limits += 1
         self._shut()
         self._wake.set()
+        # The server has given up on the connection: its place waits from now on, not from
+        # the end of the handler, which may wait for the close frame.
+        self.detach()
+
+    def detach(self) -> None:
+        """Tell the hub the connection is gone. Idempotent: the slot is released once."""
+        if self._detached:
+            return
+        self._detached = True
+        try:
+            self._state.hub.disconnected(self)
+        except Exception as exc:
+            log_exception(logger, "ws disconnect", exc)
 
     def stop(self) -> None:
         """Abandon the connection without a close frame. Idempotent."""
@@ -239,10 +253,7 @@ async def serve(websocket: Socket, host: str | None, state: WsState) -> None:
         log_exception(logger, "ws handler", exc)
     finally:
         # Synchronous on purpose: a cancelled handler still releases its slot exactly once.
-        try:
-            state.hub.disconnected(conn)
-        except Exception as exc:
-            log_exception(logger, "ws disconnect", exc)
+        conn.detach()
         state.limits.connection_closed()
         conn.stop()
 

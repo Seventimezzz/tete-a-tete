@@ -186,11 +186,6 @@ async def test_binary_frames_count_bytes_too() -> None:
 
 
 @pytest.mark.usefixtures("short_close")
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-4: signal адресату, чьё соединение сервер уже закрыл (1008/4001), теряется: "
-    "место ещё не ждёт, Connection.send молча выбрасывает, в очередь не попадает",
-)
 async def test_signal_to_a_connection_closed_by_the_server_is_queued() -> None:
     state = make_state(LimitConfig(msg_burst=3, msg_rate=0.0001))
     a, b = Sock(), Sock(stuck_close=True)
