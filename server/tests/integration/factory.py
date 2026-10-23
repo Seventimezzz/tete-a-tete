@@ -3,6 +3,8 @@
 TETE_TEST_LIMITS: JSON with LimitConfig fields to override.
 TETE_TEST_FAULT=1: a join with the name "boom" raises an exception full of personal data,
 to check that only its type name reaches the log.
+TETE_TEST_CLOSE_WAIT: seconds a closing handshake may take before the transport is aborted
+(1 s in production), so that a test can resume a paused reader without a race.
 """
 
 import json
@@ -30,4 +32,6 @@ def make_app() -> FastAPI:
     raw = os.environ.get("TETE_TEST_LIMITS")
     limit_config = LimitConfig(**json.loads(raw)) if raw else None
     hub_factory = FaultyHub if os.environ.get("TETE_TEST_FAULT") == "1" else Hub
-    return create_app(limit_config=limit_config, hub_factory=hub_factory)
+    raw_wait = os.environ.get("TETE_TEST_CLOSE_WAIT")
+    close_wait = float(raw_wait) if raw_wait else None
+    return create_app(limit_config=limit_config, hub_factory=hub_factory, close_wait=close_wait)

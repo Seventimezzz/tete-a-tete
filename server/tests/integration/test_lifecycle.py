@@ -16,9 +16,6 @@ from tests.integration.harness import RAISED_LIMITS, Client, RunningServer, mark
 
 pytestmark = pytest.mark.integration
 
-# No message tells that the server has noticed a dropped connection; this is how long
-# the test lets it take before relying on the place waiting.
-DROP_NOTICED_SECONDS = 0.3
 ABRUPT_CLIENTS = 50
 ROOM_SIZE = 5
 
@@ -61,7 +58,7 @@ async def test_drop_and_return_with_queue(server: RunningServer) -> None:
     await a.expect("peer-joined")
 
     b.abort()
-    await asyncio.sleep(DROP_NOTICED_SECONDS)
+    await a.settle()  # the server has noticed the drop: b's place waits
     first, second = offer("очередь-1"), offer("очередь-2")
     await a.signal(joined_b["selfId"], first)
     await a.signal(joined_b["selfId"], second)
@@ -226,10 +223,8 @@ async def test_abrupt_disconnects_leave_no_traceback(start: StartServer) -> None
         peer_ids = [peer_id for _, peer_id in room]
         drops.extend(_drop_mid_send(client, peer_id, peer_ids) for client, peer_id in room)
     await asyncio.gather(*drops)
-    await asyncio.sleep(DROP_NOTICED_SECONDS)  # the log check must see what the drops caused
-
     probe = await Client.connect(server)
-    await probe.ping()
+    await probe.settle()  # the log check must see what the drops caused
     await probe.close()
 
 

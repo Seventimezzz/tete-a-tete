@@ -33,15 +33,15 @@ def assert_clean_log(server: RunningServer) -> None:
 @pytest.fixture
 def start() -> Iterator[StartServer]:
     """Start servers with the test secret: `limits` runs the test factory with LimitConfig
-    overrides, `env` adds variables (TETE_TEST_FAULT also needs the factory). Every server is
-    stopped and its log checked when the test ends."""
+    overrides, `env` adds variables (any TETE_TEST_* runs the test factory too). Every server
+    is stopped and its log checked when the test ends."""
     started: list[RunningServer] = []
 
     def _start(
         *, limits: Mapping[str, Any] | None = None, env: Mapping[str, str] | None = None
     ) -> RunningServer:
         full_env = {"RESUME_SECRET": TEST_SECRET, **(env or {})}
-        use_factory = limits is not None or "TETE_TEST_FAULT" in full_env
+        use_factory = limits is not None or any(k.startswith("TETE_TEST_") for k in full_env)
         if limits is not None:
             full_env["TETE_TEST_LIMITS"] = json.dumps(limits)
         server = start_server(

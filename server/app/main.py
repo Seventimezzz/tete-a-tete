@@ -60,8 +60,12 @@ def create_app(
     clock: Clock | None = None,
     limit_config: LimitConfig | None = None,
     hub_factory: Callable[..., Hub] = Hub,
+    close_wait: float | None = None,
 ) -> FastAPI:
-    """Settings left out are read from the environment at startup, not at import."""
+    """Settings left out are read from the environment at startup, not at import.
+
+    `close_wait` replaces the close window of app.ws.CLOSE_WAIT_SECONDS; for tests only.
+    """
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -73,7 +77,7 @@ def create_app(
         used_clock = clock if clock is not None else MonotonicClock()
         limits = Limits(limit_config if limit_config is not None else LimitConfig(), used_clock)
         hub = hub_factory(secret=current.resume_secret, clock=used_clock, limits=limits)
-        state = WsState(hub=hub, limits=limits, clock=used_clock)
+        state = WsState(hub=hub, limits=limits, clock=used_clock, close_wait=close_wait)
         app.state.ws = state
         loop = asyncio.get_running_loop()
         previous_handler = loop.get_exception_handler()

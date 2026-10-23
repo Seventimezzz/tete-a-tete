@@ -62,6 +62,13 @@ class WsState:
     clock: Clock
     closed_by_limits: int = 0  # refused handshakes and closes with 1008 or 4001
     warned_shared_key: bool = False
+    close_wait: float | None = None  # integration tests only: replaces CLOSE_WAIT_SECONDS
+
+    @property
+    def close_window(self) -> float:
+        """How long a closing handshake may take before the transport is aborted."""
+        return CLOSE_WAIT_SECONDS if self.close_wait is None else self.close_wait
+
     outboxes: OutboxLedger["Connection"] = field(default_factory=OutboxLedger)
 
 
@@ -214,7 +221,7 @@ class Connection:
     async def run(self) -> None:
         """Read until the client leaves or the connection is closed.
 
-        After close(code) the closing handshake gets at most CLOSE_WAIT_SECONDS, then the
+        After close(code) the closing handshake gets at most the close window, then the
         transport is aborted.
         """
         self._writer = asyncio.create_task(self._write())
@@ -240,7 +247,7 @@ class Connection:
         buffer a client that does not read never drains. The handler is still running, so the
         connection keeps counting against the limits until its transport is gone.
         """
-        window = asyncio.create_task(asyncio.sleep(CLOSE_WAIT_SECONDS))
+        window = asyncio.create_task(asyncio.sleep(self._state.close_window))
         try:
             await asyncio.wait((writer, window), return_when=asyncio.FIRST_COMPLETED)
             if self._abort is not None:
@@ -317,7 +324,7 @@ async def serve(
     """Run one client connection. Never raises: errors are logged by type name only.
 
     `abort` tears the transport down (see transport_aborter). However the handler ends, the
-    transport gets at most CLOSE_WAIT_SECONDS more to close on its own.
+    transport gets at most the close window more to close on its own.
     """
     key = ip_key(host)
     if not state.warned_shared_key and _is_shared_key(host, key):
@@ -342,7 +349,7 @@ async def serve(
         state.limits.connection_closed()
         conn.stop()
         if abort is not None:
-            asyncio.get_running_loop().call_later(CLOSE_WAIT_SECONDS, abort)
+            asyncio.get_running_loop().call_later(state.close_window, abort)
 
 
 router: Final = APIRouter()

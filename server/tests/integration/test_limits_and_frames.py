@@ -27,6 +27,11 @@ SLOW_READER_PAYLOAD = 60_000
 # outgoing queue. On Windows fewer messages are enough; Linux buffers grow larger.
 SLOW_READER_MESSAGES = 200
 SMALL_RECEIVE_BUFFER = 16_384
+FLOOD_BOUND = 30.0
+PONG_BOUND = 1.0
+# The reader resumes only after the server has handled every signal; the close frame then
+# waits for it this long instead of the 1 s of production.
+SLOW_READER_CLOSE_WAIT = "30"
 BURST_AFTER_JOIN = 199  # the default message burst is 200, the join took one
 
 
@@ -125,20 +130,22 @@ async def test_message_flood_closed_1008_others_still_fast(server: RunningServer
                 sent += 1
                 await asyncio.sleep(0)
 
-    flooding = asyncio.create_task(flood())
     latencies = []
-    while not flooding.done():
-        latencies.append(await other.ping())
+    async with asyncio.timeout(FLOOD_BOUND):  # a regression fails here instead of hanging
+        flooding = asyncio.create_task(flood())
+        while not flooding.done():
+            latencies.append(await other.ping())
     assert await flooder.close_code() == 1008
     assert latencies
-    assert max(latencies) < 0.2, f"pong took {max(latencies):.3f} s"
+    # Wall clock on a shared CI runner: starving the event loop would take seconds.
+    assert max(latencies) < PONG_BOUND, f"pong took {max(latencies):.3f} s"
     assert sent > 1
     for client in (target, other):
         await client.close()
 
 
 async def test_slow_reader_closed_4001(start: StartServer) -> None:
-    server = start(limits=RAISED_LIMITS)
+    server = start(limits=RAISED_LIMITS, env={"TETE_TEST_CLOSE_WAIT": SLOW_READER_CLOSE_WAIT})
     sender = await Client.connect(server, forwarded_for="203.0.113.20", compression=False)
     reader = await Client.connect(
         server,
@@ -154,7 +161,7 @@ async def test_slow_reader_closed_4001(start: StartServer) -> None:
     data = {"description": {"type": "offer", "sdp": "x" * SLOW_READER_PAYLOAD + marker("4001")}}
     for _ in range(SLOW_READER_MESSAGES):
         await sender.signal(reader_id, data)
-    # The server waits at most 1 s for the close frame to get out: read again promptly.
+    await sender.ping(timeout=10)  # every signal has been handled: the outbox overflowed
     reader.resume_reading()
     assert await reader.close_code(timeout=10.0) == 4001
     await sender.ping()

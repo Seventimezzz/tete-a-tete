@@ -260,6 +260,13 @@ class Client:
         await self.expect("pong", timeout)
         return loop.time() - started
 
+    async def settle(self) -> None:
+        """Two ping round trips. No message tells that the server has noticed a dropped
+        connection of another client; the drop reached the single event loop before this
+        client's pings, so after two round trips the server has handled it."""
+        await self.ping()
+        await self.ping()
+
     async def close_code(self, timeout: float = 5.0) -> int | None:  # noqa: ASYNC109 - test helper
         """Read until the server closes the connection; the code of its close frame
         (None if the connection was dropped without one). Messages before it are skipped."""

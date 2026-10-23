@@ -902,3 +902,38 @@ async def test_writer_failure_reports_the_disconnect(error: BaseException) -> No
     assert hub.disconnects == [conn]
     conn.detach()
     assert hub.disconnects == [conn]  # once
+
+
+# --- the close window can be widened for integration tests only (Linux CI readiness)
+
+
+def test_close_window_defaults_to_the_constant_and_create_app_overrides_it() -> None:
+    with make_client() as client:
+        assert state_of(client).close_window == ws_module.CLOSE_WAIT_SECONDS
+    app = create_app(Settings(SECRET), clock=FakeClock(), close_wait=7.5)
+    with TestClient(app) as client:
+        assert state_of(client).close_window == 7.5
+
+
+def test_test_factory_reads_the_close_wait_knob(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.integration.factory import make_app
+
+    monkeypatch.setenv("RESUME_SECRET", "s" * 32)
+    monkeypatch.setenv("TETE_TEST_CLOSE_WAIT", "12.5")
+    with TestClient(make_app()) as client:
+        assert state_of(client).close_window == 12.5
+    monkeypatch.delenv("TETE_TEST_CLOSE_WAIT")
+    with TestClient(make_app()) as client:
+        assert state_of(client).close_window == ws_module.CLOSE_WAIT_SECONDS
+
+
+async def test_connection_uses_the_state_close_window() -> None:
+    state, _ = make_state(LimitConfig(msg_burst=1, msg_rate=0.0001))
+    state.close_wait = 0.05
+    sock = FakeSocket(stuck_send=True)
+    abort = AbortSpy(state)
+    task = asyncio.create_task(serve(sock, "198.51.100.1", state, abort=abort))
+    sock.push(PING)
+    sock.push(PING)  # over the burst: closed with 1008, the close frame is stuck
+    await asyncio.wait_for(task, 0.5)  # the module constant would take 1 s
+    assert abort.calls == [1]
