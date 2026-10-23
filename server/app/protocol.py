@@ -291,8 +291,46 @@ def _keep_raw_data(message: ClientSignal, raw: str | bytes) -> bool:
     than a frame of MAX_MESSAGE_BYTES gives: only if the text could not be kept and re-serializing
     grew it, or the frame itself was over the limit."""
     message._raw_data = _raw_member(raw if isinstance(raw, str) else raw.decode(), "data")
+    if message._raw_data is not None and not _forwardable_data(message._raw_data):
+        return False
     forwarded = dump_forwarded_signal(ID_ALPHABET[0] * PEER_ID_LENGTH, message)
     return len(forwarded.encode()) <= MAX_MESSAGE_BYTES + SIGNAL_FORWARD_GROWTH
+
+
+class _DuplicateKeyError(ValueError):
+    """`data` repeats a key in one object. Carries no input."""
+
+
+class _NonFiniteError(ValueError):
+    """`data` holds NaN, Infinity or -Infinity. Carries no input."""
+
+
+def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = dict(pairs)
+    if len(result) != len(pairs):
+        raise _DuplicateKeyError
+    return result
+
+
+def _reject_constant(_: str) -> Any:
+    raise _NonFiniteError
+
+
+def _forwardable_data(raw_data: str) -> bool:
+    """The text that will be forwarded passes the checks the model ran on its own reading.
+
+    The model keeps only the last of duplicate keys, but the raw text carries all of them: a
+    duplicate could hide deep nesting or NaN from the model. Re-parse the text strictly
+    (no duplicate keys, no NaN or Infinity) and check depth and numbers on that.
+    """
+    try:
+        data = json.loads(
+            raw_data, object_pairs_hook=_unique_pairs, parse_constant=_reject_constant
+        )
+        _check_signal_data(data)
+    except (ValueError, RecursionError):
+        return False
+    return True
 
 
 _JSON_SPACE: Final = re.compile(r"[ \t\n\r]*")

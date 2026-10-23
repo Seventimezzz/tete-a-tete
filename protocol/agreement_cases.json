@@ -860,7 +860,8 @@
     "dir": "client",
     "label": "signal data dup keys",
     "raw": "{\"type\":\"signal\",\"to\":\"abcdefgh\",\"data\":{\"a\":1,\"a\":2}}",
-    "expect": "accept"
+    "expect": "reject",
+    "expectZod": "accept"
   },
   {
     "dir": "client",

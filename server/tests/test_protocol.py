@@ -341,3 +341,47 @@ def test_signal_that_would_be_forwarded_over_the_bound_is_bad_request() -> None:
     """Only a frame over --ws-max-size gets here, but parsing does not rely on uvicorn."""
     with pytest.raises(BadRequestError):
         parse_client_message(_signal_frame_of_size(MAX_MESSAGE_BYTES + 1))
+
+
+# --- duplicate keys inside `data` (F1 / M2): what is forwarded is what is checked
+
+
+def _deep(depth: int) -> str:
+    """JSON text of an array value that makes `data` `depth` levels deep at key "a"."""
+    return "[" * (depth - 1) + "]" * (depth - 1)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        '{"a":' + _deep(MAX_SIGNAL_DATA_DEPTH + 1) + ',"a":1}',
+        '{"x":{"a":' + _deep(MAX_SIGNAL_DATA_DEPTH) + ',"a":1}}',
+        '{"a":NaN,"a":1}',
+        '{"a":[{"b":Infinity,"b":0}]}',
+        '{"a":-Infinity,"a":1}',
+        '{"a":1e400,"a":1}',
+        '{"a":1,"a":2}',
+        '{"x":{"b":"one","b":"two"}}',
+    ],
+    ids=[
+        "hides-depth",
+        "hides-depth-nested",
+        "hides-nan",
+        "hides-infinity-in-array",
+        "hides-minus-infinity",
+        "hides-overflow",
+        "plain",
+        "plain-nested",
+    ],
+)
+def test_duplicate_keys_in_signal_data_are_bad_request(data: str) -> None:
+    raw = '{"type":"signal","to":"abcdefgh","data":' + data + "}"
+    with pytest.raises(BadRequestError) as info:
+        parse_client_message(raw)
+    assert info.value.__cause__ is None
+    assert info.value.__context__ is None
+
+
+def test_same_key_in_sibling_objects_is_not_a_duplicate() -> None:
+    raw = '{"type":"signal","to":"abcdefgh","data":{"a":{"k":1},"b":{"k":2},"c":[{"k":3}]}}'
+    assert isinstance(parse_client_message(raw), ClientSignal)
