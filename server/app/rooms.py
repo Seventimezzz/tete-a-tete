@@ -28,7 +28,7 @@ from app.protocol import (
     ServerPeerJoined,
     ServerPeerLeft,
     ServerPong,
-    ServerSignal,
+    dump_forwarded_signal,
     dump_server_message,
     new_peer_id,
     new_room_id,
@@ -334,7 +334,7 @@ class Hub:
         target = room.peers.get(message.to)
         if target is None or target is sender:
             return  # the addressee may have just left
-        text = _text(ServerSignal(from_=sender.id, data=message.data))
+        text = dump_forwarded_signal(sender.id, message)
         if target.conn is not None:
             target.conn.send(text)
         else:

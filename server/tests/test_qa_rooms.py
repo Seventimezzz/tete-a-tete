@@ -7,7 +7,6 @@ xfail(strict=True) and a QA-<n> reference to the report.
 import json
 from typing import Any
 
-import pytest
 from pydantic import JsonValue
 
 from app.limits import LimitConfig, Limits
@@ -113,11 +112,6 @@ def _signal_frame(numbers: int) -> str:
     return f'{{"type":"signal","to":"PEER","data":{{"candidate":[{items}]}}}}'
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-3: пересобранный signal в ~3,8 раза больше принятого кадра: кадр < 64 КБ "
-    "уходит адресату сообщением ~250 КБ, мимо лимита размера и байтовых бакетов",
-)
 def test_forwarded_signal_is_not_larger_than_the_message_limit() -> None:
     env = Env()
     a, b = env.open(), RawConn()

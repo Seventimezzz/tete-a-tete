@@ -1,5 +1,6 @@
 """Signaling protocol: the source of truth for protocol/schema.json and the client."""
 
+import json
 import math
 import re
 import secrets
@@ -11,6 +12,7 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    PrivateAttr,
     TypeAdapter,
     ValidationError,
 )
@@ -24,6 +26,9 @@ NAME_MAX_LENGTH: Final = 32
 RESUME_TOKEN_MAX_LENGTH: Final = 128
 PAIR_MS_MAX: Final = 3_600_000
 PAIR_RESTARTS_MAX: Final = 100
+# The largest message either side sends: --ws-max-size for incoming frames, and the server's
+# own limit for what it forwards.
+MAX_MESSAGE_BYTES: Final = 65_536
 # `data` of a signal: the object itself is depth 1, each nested object or array adds 1.
 # Deeper data parses but cannot be serialized back for forwarding (about 98 levels).
 MAX_SIGNAL_DATA_DEPTH: Final = 32
@@ -156,6 +161,8 @@ class ClientSignal(_ClientModel):
     type: Literal["signal"]
     to: PeerId
     data: _SignalData = Field(repr=False)
+    # JSON text of `data` exactly as it came in the frame; set by parse_client_message.
+    _raw_data: str | None = PrivateAttr(default=None)
 
 
 class ClientMute(_ClientModel):
@@ -268,11 +275,72 @@ class BadRequestError(Exception):
 
 def parse_client_message(raw: str | bytes) -> ClientMessage:
     try:
-        return client_message_adapter.validate_json(raw)
+        message = client_message_adapter.validate_json(raw)
     except ValidationError:
         pass
+    else:
+        if not isinstance(message, ClientSignal) or _keep_raw_data(message, raw):
+            return message
     # Raised after the block: else the ValidationError (holds the input, SDP) stays in __context__.
     raise BadRequestError
+
+
+def _keep_raw_data(message: ClientSignal, raw: str | bytes) -> bool:
+    """Keep the text of `data` for forwarding. False if the forwarded signal would be larger
+    than MAX_MESSAGE_BYTES: "to" becomes "from", two bytes more than the frame."""
+    message._raw_data = _raw_member(raw if isinstance(raw, str) else raw.decode(), "data")
+    forwarded = dump_forwarded_signal(ID_ALPHABET[0] * PEER_ID_LENGTH, message)
+    return len(forwarded.encode()) <= MAX_MESSAGE_BYTES
+
+
+_JSON_SPACE: Final = re.compile(r"[ \t\n\r]*")
+_json_decoder: Final = json.JSONDecoder()
+
+
+def _skip_space(text: str, at: int) -> int:
+    match = _JSON_SPACE.match(text, at)
+    return match.end() if match else at
+
+
+def _raw_member(text: str, name: str) -> str | None:
+    """JSON text of the last member `name` of the top-level object in `text`, or None.
+
+    The last one, as the model keeps the last of duplicate keys. Only called on text the model
+    has accepted; anything unexpected gives None, and the caller re-serializes instead.
+    """
+    found = None
+    at = _skip_space(text, 0)
+    if text[at : at + 1] != "{":
+        return None
+    at = _skip_space(text, at + 1)
+    try:
+        while text[at : at + 1] == '"':
+            key, at = _json_decoder.raw_decode(text, at)  # a string: the loop checked '"'
+            at = _skip_space(text, at)
+            if text[at : at + 1] != ":":
+                return None
+            start = _skip_space(text, at + 1)
+            _, at = _json_decoder.raw_decode(text, start)
+            if key == name:
+                found = text[start:at]
+            at = _skip_space(text, at)
+            if text[at : at + 1] == "}":
+                return found
+            if text[at : at + 1] != ",":
+                return None
+            at = _skip_space(text, at + 1)
+    except (ValueError, RecursionError):
+        return None
+    return None
+
+
+def dump_forwarded_signal(from_id: str, message: ClientSignal) -> str:
+    """The `signal` the addressee gets. `data` keeps the text it came in: re-serializing it
+    could make the message several times larger (9e15 dumps as 9000000000000000.0)."""
+    raw = message._raw_data
+    if raw is None:
+        return dump_server_message(ServerSignal(from_=from_id, data=message.data))
+    return '{"type":"signal","from":' + json.dumps(from_id) + ',"data":' + raw + "}"
 
 
 def dump_server_message(message: ServerMessage) -> str:

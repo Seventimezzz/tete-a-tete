@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from app.protocol import (
     _ID_CLASS,
     ID_ALPHABET,
+    MAX_MESSAGE_BYTES,
     MAX_SIGNAL_DATA_DEPTH,
     BadRequestError,
     ClientCreate,
@@ -23,6 +24,7 @@ from app.protocol import (
     ServerRelay,
     ServerSignal,
     client_message_adapter,
+    dump_forwarded_signal,
     dump_server_message,
     new_peer_id,
     new_room_id,
@@ -272,3 +274,68 @@ def test_client_adapter_validation_error_hides_the_input() -> None:
     with pytest.raises(ValidationError) as info:
         client_message_adapter.validate_python({"type": "signal", "to": "bad", "data": SECRET_SDP})
     assert "192.0.2.77" not in str(info.value) + repr(info.value)
+
+
+# --- forwarding a signal: the raw text of `data` (QA-3)
+
+NEWLINE = chr(10)
+
+
+def _forward(frame: str) -> str:
+    message = parse_client_message(frame)
+    assert isinstance(message, ClientSignal)
+    return dump_forwarded_signal(PEER, message)
+
+
+def test_forwarded_signal_keeps_the_raw_data_text() -> None:
+    raw_data = '{ "candidate" : [9e15, 1E5, -0, 0.10] ,' + NEWLINE + r' "s": "\u0041\/\u2028"}'
+    frame = f'{{ "type": "signal",\t"to": "{PEER}", "data": {raw_data} }}'
+    text = _forward(frame)
+    assert text == f'{{"type":"signal","from":"{PEER}","data":{raw_data}}}'
+    assert server_message_adapter.validate_json(text) == ServerSignal(
+        from_=PEER, data=json.loads(raw_data)
+    )
+
+
+def test_forwarded_signal_takes_the_data_member_the_model_validated() -> None:
+    """Duplicate keys: the model keeps the last one, forwarding must take the same text."""
+    frame = (
+        rf'{{"data":{{"first":1}},"type":"signal","d\u0061ta":{{"last":[1e1]}},'
+        f'"to":"{PEER}","data" :{{"last":[2e2]}}}}'
+    )
+    message = parse_client_message(frame)
+    assert isinstance(message, ClientSignal)
+    assert message.data == {"last": [200.0]}
+    assert _forward(frame) == f'{{"type":"signal","from":"{PEER}","data":{{"last":[2e2]}}}}'
+
+
+def test_forwarded_signal_built_in_python_is_dumped() -> None:
+    message = ClientSignal(type="signal", to=PEER, data={"sdp": "v=0", "n": [1, 2.5]})
+    assert dump_forwarded_signal("bcdefghj", message) == dump_server_message(
+        ServerSignal(from_="bcdefghj", data={"sdp": "v=0", "n": [1, 2.5]})
+    )
+
+
+def test_forwarded_signal_is_at_most_two_bytes_longer_than_the_frame() -> None:
+    """The key "to" becomes "from": the only growth, whatever the frame looks like."""
+    numbers = ",".join(["9e15"] * 13_000)
+    frame = f'{{"type":"signal","to":"{PEER}","data":{{"candidate":[{numbers}]}}}}'
+    assert len(_forward(frame).encode()) == len(frame.encode()) + 2
+
+
+def _signal_frame_of_size(total: int) -> str:
+    head = f'{{"type":"signal","to":"{PEER}","data":{{"sdp":"'
+    frame = head + "s" * (total - len(head) - len('"}}')) + '"}}'
+    assert len(frame.encode()) == total
+    return frame
+
+
+@pytest.mark.parametrize("total", [MAX_MESSAGE_BYTES - 1, MAX_MESSAGE_BYTES])
+def test_signal_that_would_be_forwarded_over_the_message_limit_is_bad_request(total: int) -> None:
+    with pytest.raises(BadRequestError):
+        parse_client_message(_signal_frame_of_size(total))
+
+
+def test_signal_forwarded_at_exactly_the_message_limit_parses() -> None:
+    text = _forward(_signal_frame_of_size(MAX_MESSAGE_BYTES - 2))
+    assert len(text.encode()) == MAX_MESSAGE_BYTES
