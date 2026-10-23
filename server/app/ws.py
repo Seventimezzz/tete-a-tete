@@ -27,8 +27,9 @@ from app.protocol import (
 )
 from app.rooms import Hub
 
-OUTBOX_MAX_MESSAGES: Final = 256
-OUTBOX_MAX_BYTES: Final = 1_048_576
+# Above what the four other members of a room can send at once (4 x 200 messages of burst).
+OUTBOX_MAX_MESSAGES: Final = 1024
+OUTBOX_MAX_BYTES: Final = 2_097_152
 CLOSE_WAIT_SECONDS: Final = 1.0
 SHARED_KEY_WARNING: Final = "X-Forwarded-For отсутствует, лимиты общие"
 
@@ -240,6 +241,8 @@ class Connection:
                 self.send(_BAD_REQUEST)
                 continue
             hub.handle(self, parsed)
+            # A batch of frames is read without suspending: let the writers drain in between.
+            await asyncio.sleep(0)
 
     def _admit(self, size: int) -> bool:
         now = self._state.clock.now()

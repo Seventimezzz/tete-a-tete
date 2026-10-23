@@ -23,10 +23,11 @@ pytestmark = pytest.mark.integration
 OVERSIZED = 70_000
 FLOOD_ELEMENTS = 32_000  # a signal of about 64 KB made of small elements
 SLOW_READER_PAYLOAD = 60_000
-# About 12 MB: the TCP buffers between the paused reader and the server plus the 1 MB
-# outgoing queue. On Windows about 30 messages are enough; Linux buffers grow larger.
+# About 12 MB: the TCP buffers between the paused reader and the server plus the 2 MB
+# outgoing queue. On Windows fewer messages are enough; Linux buffers grow larger.
 SLOW_READER_MESSAGES = 200
 SMALL_RECEIVE_BUFFER = 16_384
+BURST_AFTER_JOIN = 199  # the default message burst is 200, the join took one
 
 
 async def assert_refused(server: RunningServer, forwarded_for: str) -> None:
@@ -158,6 +159,31 @@ async def test_slow_reader_closed_4001(start: StartServer) -> None:
     assert await reader.close_code(timeout=10.0) == 4001
     await sender.ping()
     await sender.close()
+
+
+async def test_four_full_bursts_to_one_reading_member_do_not_close_it(
+    server: RunningServer,
+) -> None:
+    """M1: the four other members of a room each spend their whole message burst on signals to
+    one member that reads normally; it gets every signal and is not closed with 4001."""
+    target = await Client.connect(server, forwarded_for="203.0.113.30")
+    joined = await target.create("Цель-залп")
+    senders = [await Client.connect(server, forwarded_for=f"203.0.113.{31 + i}") for i in range(4)]
+    for i, sender in enumerate(senders):
+        await sender.join(joined["roomId"], f"Залп-{i}")
+        await target.expect("peer-joined")
+    text = json.dumps({"type": "signal", "to": joined["selfId"], "data": {"candidate": "c"}})
+
+    async def burst(sender: Client) -> None:
+        for _ in range(BURST_AFTER_JOIN):
+            await sender.ws.send(text)
+
+    await asyncio.gather(*(burst(sender) for sender in senders))
+    for _ in range(len(senders) * BURST_AFTER_JOIN):
+        await target.expect("signal", timeout=5.0)
+    await target.ping()
+    for client in (target, *senders):
+        await client.close()
 
 
 async def test_short_secret_fails_without_printing_it() -> None:

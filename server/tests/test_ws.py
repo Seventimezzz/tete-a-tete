@@ -711,3 +711,58 @@ def test_transport_aborter_is_none_under_the_test_client() -> None:
     ):
         pass
     assert seen == [None]
+
+
+# --- a burst from several members does not overflow a reading member's outbox (M1)
+
+# The default message burst of a connection is 200; its join took one.
+BURST = 199
+SENDERS = 4  # the other members of a full room
+
+
+async def _burst_to_target(state: WsState) -> None:
+    """A target and four senders in one room over serve(), each with its own key; every
+    sender's burst of signals to the target is in before any reader runs."""
+    target = FakeSocket()
+    tasks = [asyncio.create_task(serve(target, "198.51.100.10", state))]
+    target.push(create_msg("Цель"))
+    await until(lambda: len(target.sent) == 1)
+    joined = target.messages()[0]
+    senders = []
+    for i in range(SENDERS):
+        sock = FakeSocket()
+        tasks.append(asyncio.create_task(serve(sock, f"198.51.100.{11 + i}", state)))
+        sock.push(join_msg(joined["roomId"], f"Отправитель-{i}"))
+        senders.append(sock)
+    await until(lambda: len(target.sent) == 1 + SENDERS)
+    signal = json.dumps({"type": "signal", "to": joined["selfId"], "data": {"candidate": "c"}})
+    for sock in senders:
+        for _ in range(BURST):
+            sock.push(signal)
+    expected = 1 + SENDERS + SENDERS * BURST
+    await until(lambda: len(target.sent) >= expected or target.closed_with is not None)
+    assert target.closed_with is None
+    assert len(target.sent) == expected
+    for sock in (target, *senders):
+        sock.incoming.put_nowait({"type": "websocket.disconnect", "code": 1000})
+    await asyncio.wait_for(asyncio.gather(*tasks), 2.0)
+
+
+async def test_four_bursts_to_one_reading_member_do_not_close_it() -> None:
+    state, _ = make_state()
+    await _burst_to_target(state)
+    assert state.closed_by_limits == 0
+
+
+async def test_readers_yield_so_the_writer_drains_between_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Even with the old outbox of 256 messages, 4 x 200 fits: the readers let the writer run."""
+    monkeypatch.setattr(ws_module, "OUTBOX_MAX_MESSAGES", 256)
+    state, _ = make_state()
+    await _burst_to_target(state)
+    assert state.closed_by_limits == 0
+
+
+def test_outbox_limits_are_1024_messages_and_2_mib() -> None:
+    assert (OUTBOX_MAX_MESSAGES, OUTBOX_MAX_BYTES) == (1024, 2 * 1024 * 1024)
