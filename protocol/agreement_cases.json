@@ -1247,14 +1247,14 @@
   },
   {
     "dir": "client",
-    "label": "signal data depth 32 (limit)",
-    "raw": "{\"type\":\"signal\",\"to\":\"abcdefgh\",\"data\":{\"a\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}}",
+    "label": "signal data depth 8 (limit)",
+    "raw": "{\"type\":\"signal\",\"to\":\"abcdefgh\",\"data\":{\"a\":[[[[[[[]]]]]]]}}",
     "expect": "accept"
   },
   {
     "dir": "client",
-    "label": "signal data depth 33 (over limit)",
-    "raw": "{\"type\":\"signal\",\"to\":\"abcdefgh\",\"data\":{\"a\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}}",
+    "label": "signal data depth 9 (over limit)",
+    "raw": "{\"type\":\"signal\",\"to\":\"abcdefgh\",\"data\":{\"a\":[[[[[[[[]]]]]]]]}}",
     "expect": "reject",
     "expectZod": "accept"
   }

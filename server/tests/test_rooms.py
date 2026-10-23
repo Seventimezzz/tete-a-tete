@@ -6,6 +6,7 @@ from pydantic import JsonValue
 from app.limits import LimitConfig, Limits
 from app.protocol import (
     ID_ALPHABET,
+    MAX_SIGNAL_DATA_DEPTH,
     ClientCreate,
     ClientJoin,
     ClientLeave,
@@ -180,7 +181,7 @@ def test_signal_forwarded_with_from_and_exact_data() -> None:
     a_id, b_id = joined(a)["selfId"], joined(b)["selfId"]
     data: dict[str, JsonValue] = {
         "description": {"sdp": "привет", "n": [1, 2.5, None]},
-        "deep": nested(30),
+        "deep": nested(MAX_SIGNAL_DATA_DEPTH - 1),  # data at the depth limit
     }
     hub.handle(a, ClientSignal(type="signal", to=b_id, data=data))
     assert b.of_type("signal") == [{"type": "signal", "from": a_id, "data": data}]

@@ -31,8 +31,9 @@ PAIR_RESTARTS_MAX: Final = 100
 MAX_MESSAGE_BYTES: Final = 65_536
 SIGNAL_FORWARD_GROWTH: Final = len('"from"') - len('"to"')
 # `data` of a signal: the object itself is depth 1, each nested object or array adds 1.
-# Deeper data parses but cannot be serialized back for forwarding (about 98 levels).
-MAX_SIGNAL_DATA_DEPTH: Final = 32
+# Real data is two levels deep ({description: {type, sdp}}, {candidate: {...}},
+# {relayTrack: {mid, from}}); eight leaves room for growth and keeps the walk cheap.
+MAX_SIGNAL_DATA_DEPTH: Final = 8
 # WebSocket close codes; they are not part of the JSON schema.
 CLOSE_REPLACED: Final = 4000  # the seat was taken by a new join
 CLOSE_SLOW_READER: Final = 4001  # the outgoing queue overflowed

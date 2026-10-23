@@ -385,3 +385,12 @@ def test_duplicate_keys_in_signal_data_are_bad_request(data: str) -> None:
 def test_same_key_in_sibling_objects_is_not_a_duplicate() -> None:
     raw = '{"type":"signal","to":"abcdefgh","data":{"a":{"k":1},"b":{"k":2},"c":[{"k":3}]}}'
     assert isinstance(parse_client_message(raw), ClientSignal)
+
+
+def test_signal_data_depth_limit_is_eight() -> None:
+    """Real `data` is two levels deep ({description: {...}}); eight leaves room for growth."""
+    assert MAX_SIGNAL_DATA_DEPTH == 8
+    nine = '{"type":"signal","to":"abcdefgh","data":{"a":[[[[[[[[]]]]]]]]}}'
+    with pytest.raises(BadRequestError):
+        parse_client_message(nine)
+    assert isinstance(parse_client_message(nine.replace("[]", "")), ClientSignal)
