@@ -299,9 +299,10 @@ def test_state_repr_has_no_name_or_data() -> None:
     join(hub, a, name="СекретноеИмя")
     join(hub, b, name="Другое")
     hub.handle(a, ClientSignal(type="signal", to=joined(b)["selfId"], data={"sdp": "ЦЕЛЬ"}))
-    text = repr(hub._rooms)
-    assert text.count("Room(") == 1
-    assert "Peer(" in text
+    (room,) = hub._rooms.values()
+    text = repr(room) + "".join(repr(p) for p in room.peers.values())
+    assert text.count("Room(peers=2") == 1
+    assert text.count("Peer(") == 2
     for secret in ("СекретноеИмя", "Другое", "ЦЕЛЬ", "NetInfo", "FakeConn"):
         assert secret not in text
 

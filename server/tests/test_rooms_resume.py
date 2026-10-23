@@ -4,8 +4,10 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
 from pydantic import JsonValue
 
+from app import rooms as rooms_module
 from app.limits import LimitConfig, Limits
 from app.protocol import (
     CLOSE_REPLACED,
@@ -15,8 +17,9 @@ from app.protocol import (
     ClientMute,
     ClientSignal,
     NetInfo,
+    new_peer_id,
 )
-from app.rooms import Hub, HubStats
+from app.rooms import LEFT_MAX, Hub, HubStats
 from app.tokens import issue_token
 from tests.fakes import START, FakeClock, FakeConn
 
@@ -678,3 +681,86 @@ def test_queued_signal_from_a_waiting_sender_is_kept() -> None:
     b2 = env.open()
     join(env, b2, token=token(b))
     assert [m["from"] for m in b2.of_type("signal")] == [a_id]
+
+
+# --- `left` is bounded; an id that fell out of it never gets a place back (L4)
+
+MANY_JOINS = LimitConfig(joins_per_window=1_000_000)
+
+
+def _churn(env: Env, conn: FakeConn, times: int) -> list[str]:
+    """Join and leave `times` times; the ids that went to `left`, oldest first."""
+    gone = []
+    for _ in range(times):
+        join(env, conn)
+        gone.append(self_id(conn))
+        env.hub.handle(conn, ClientLeave(type="leave"))
+    return gone
+
+
+def test_left_keeps_the_last_1000_ids() -> None:
+    env = make_env(MANY_JOINS)
+    keeper, churner = env.open(), env.open()
+    join(env, keeper)
+    gone = _churn(env, churner, LEFT_MAX + 5)
+    room = env.hub._rooms[ROOM]
+    assert LEFT_MAX == 1000
+    assert len(room.left) == LEFT_MAX
+    assert list(room.left) == gone[5:]
+
+
+def test_evicted_id_returns_as_a_newcomer_not_with_its_old_id() -> None:
+    env = make_env(MANY_JOINS)
+    keeper, first = env.open(), env.open()
+    join(env, keeper)
+    join(env, first)
+    first_id, first_token = self_id(first), token(first)
+    env.hub.handle(first, ClientLeave(type="leave"))
+    _churn(env, env.open(), LEFT_MAX)  # pushes first_id out of `left`
+    assert first_id not in env.hub._rooms[ROOM].left
+    back = env.open()
+    join(env, back, token=first_token)
+    assert joined(back)["resumed"] is False
+    assert self_id(back) != first_id
+
+
+def test_new_ids_never_repeat_an_evicted_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    env = make_env(MANY_JOINS)
+    keeper, first = env.open(), env.open()
+    join(env, keeper)
+    join(env, first)
+    first_id, first_token = self_id(first), token(first)
+    env.hub.handle(first, ClientLeave(type="leave"))
+    _churn(env, env.open(), LEFT_MAX)
+    real = new_peer_id
+    offered = [first_id, first_id]  # the generator draws the evicted id twice
+    monkeypatch.setattr(rooms_module, "new_peer_id", lambda: offered.pop() if offered else real())
+    newcomer = env.open()
+    join(env, newcomer)
+    assert offered == []
+    assert self_id(newcomer) != first_id
+    # The token of the evicted id cannot take the newcomer's place either.
+    back = env.open()
+    join(env, back, token=first_token)
+    assert self_id(back) not in {first_id, self_id(newcomer)}
+    assert newcomer.closed is None
+
+
+def test_room_without_evictions_still_restores_unknown_ids() -> None:
+    """After a restart the room is new: a token id it never saw gets its place back."""
+    env = make_env()
+    a = env.open()
+    join(env, a, token=issue_token(SECRET, ROOM, "abcdefgh"))
+    assert (joined(a)["resumed"], self_id(a)) == (True, "abcdefgh")
+
+
+def test_room_and_peer_repr_hold_no_ids_or_names() -> None:
+    env = make_env(MANY_JOINS)
+    a, b = env.open(), env.open()
+    join(env, a, name="СекретноеИмя")
+    join(env, b, name="Другое")
+    _churn(env, env.open(), 2)
+    room = env.hub._rooms[ROOM]
+    text = repr(room) + "".join(repr(p) for p in room.peers.values())
+    secrets_ = {ROOM, "СекретноеИмя", "Другое", *room.peers, *room.left}
+    assert not [s for s in secrets_ if s in text]

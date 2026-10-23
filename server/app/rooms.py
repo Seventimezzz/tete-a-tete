@@ -1,8 +1,11 @@
 """Rooms in memory. Pure synchronous logic: no network, no asyncio, time from the clock.
 
-Nothing here may log or put into a repr names, signal data, ids or tokens.
+Nothing here logs. Reprs of Hub, Room and Peer hold counts and times only: no room or peer
+ids, names, signal data or tokens.
 """
 
+import hashlib
+import secrets
 from dataclasses import dataclass, field
 from typing import Final, Protocol
 
@@ -39,6 +42,11 @@ WAIT_SECONDS: Final = 15.0
 WAIT_QUEUE_MAX: Final = 50
 WAIT_QUEUE_BYTES: Final = 262_144
 WAIT_QUEUE_PER_SENDER: Final = 25
+# Freed ids a room remembers exactly; older ones go to a bitmap that only grows.
+LEFT_MAX: Final = 1000
+_EVICTED_BITS: Final = 1 << 16
+# Draws of a new peer id before giving up (only a room with a saturated bitmap gets there).
+_NEW_ID_TRIES: Final = 64
 
 
 class Conn(Protocol):
@@ -55,7 +63,7 @@ class Conn(Protocol):
 
 @dataclass(eq=False)
 class Peer:
-    id: str
+    id: str = field(repr=False)
     conn: Conn | None = field(repr=False)  # None while waiting for a return
     name: str = field(repr=False)
     muted: bool
@@ -69,11 +77,43 @@ class Peer:
     seat_key: str | None = field(default=None, repr=False)  # IP key whose slot a waiting seat holds
 
 
-@dataclass(eq=False)
+@dataclass(eq=False, repr=False)
 class Room:
-    id: str = field(repr=False)
+    id: str
     peers: dict[str, Peer] = field(default_factory=dict)
-    left: set[str] = field(default_factory=set)  # seat freed: a return gets resumed=False
+    # Freed places, oldest first: a return gets resumed=False. At most LEFT_MAX; an id pushed
+    # out is marked in `_evicted` and is still treated as freed (maybe also a few never-seen
+    # ids, which then join as newcomers too). A new peer id is never one marked there.
+    left: dict[str, None] = field(default_factory=dict)
+    _evicted: bytearray | None = None
+    _salt: bytes = field(default_factory=lambda: secrets.token_bytes(16))
+
+    def __repr__(self) -> str:
+        return f"Room(peers={len(self.peers)}, left={len(self.left)})"
+
+    def free(self, peer_id: str) -> None:
+        """Remember a freed place; the oldest one beyond LEFT_MAX goes to the bitmap."""
+        self.left[peer_id] = None
+        if len(self.left) > LEFT_MAX:
+            oldest = next(iter(self.left))
+            del self.left[oldest]
+            if self._evicted is None:
+                self._evicted = bytearray(_EVICTED_BITS // 8)
+            bit = self._bit(oldest)
+            self._evicted[bit // 8] |= 1 << (bit % 8)
+
+    def freed(self, peer_id: str) -> bool:
+        """The place was freed: the id is in `left` or (maybe) pushed out of it."""
+        if peer_id in self.left:
+            return True
+        if self._evicted is None:
+            return False
+        bit = self._bit(peer_id)
+        return bool(self._evicted[bit // 8] & (1 << (bit % 8)))
+
+    def _bit(self, peer_id: str) -> int:
+        digest = hashlib.blake2b(peer_id.encode(), digest_size=4, key=self._salt).digest()
+        return int.from_bytes(digest) % _EVICTED_BITS
 
 
 @dataclass(frozen=True)
@@ -197,7 +237,7 @@ class Hub:
             place = room.peers.get(peer_id)
             if place is not None:
                 return self._resume(conn, room, place, net)
-            if peer_id not in room.left:  # the room was recreated after a restart
+            if not room.freed(peer_id):  # the room was recreated after a restart
                 if len(room.peers) >= ROOM_CAPACITY:
                     return self._error(conn, "room-full")
                 return self._add_peer(conn, room, name, net, peer_id=peer_id)
@@ -236,9 +276,9 @@ class Hub:
         """Add a peer: a newcomer gets a fresh id, a token holder keeps its id (resumed)."""
         resumed = peer_id is not None
         if peer_id is None:
-            peer_id = new_peer_id()
-            while peer_id in room.peers or peer_id in room.left:
-                peer_id = new_peer_id()
+            peer_id = self._new_peer_id(room)
+            if peer_id is None:
+                return self._error(conn, "room-full")
         peer = Peer(
             id=peer_id,
             conn=conn,
@@ -251,6 +291,14 @@ class Hub:
         self._seats[id(conn)] = (room.id, peer_id)
         self._broadcast(room, ServerPeerJoined(id=peer_id, name=name), skip=peer)
         self._send_joined(conn, room, peer, resumed=resumed)
+
+    def _new_peer_id(self, room: Room) -> str | None:
+        """An id that is not in the room and was never freed in it, or None."""
+        for _ in range(_NEW_ID_TRIES):
+            peer_id = new_peer_id()
+            if peer_id not in room.peers and not room.freed(peer_id):
+                return peer_id
+        return None
 
     def _resume(self, conn: Conn, room: Room, peer: Peer, net: NetInfo) -> None:
         """Bind a new connection to an existing place. The others hear nothing."""
@@ -314,7 +362,7 @@ class Hub:
     def _remove_peer(self, room: Room, peer: Peer) -> None:
         """Remove a peer for good: free the seat and its slot, drop its queue, tell the others."""
         del room.peers[peer.id]
-        room.left.add(peer.id)
+        room.free(peer.id)
         self._drop_queue(peer)
         if peer.seat_key is not None:
             self._limits.release_seat(peer.seat_key)
