@@ -2,6 +2,7 @@
 fragments are counted, a frozen client is dropped after the keepalive timeout."""
 
 import asyncio
+import contextlib
 import json
 import os
 import struct
@@ -9,6 +10,7 @@ import time
 
 import pytest
 
+from app.frames import MESSAGE_FRAMES_MAX
 from tests.integration.conftest import assert_clean_log
 from tests.integration.harness import RAISED_LIMITS, TEST_SECRET, Client, RunningServer, marker
 from tests.integration.harness import start_server as start_uvicorn
@@ -28,6 +30,10 @@ KEEPALIVE_SECONDS = 1.0
 FROZEN_SIGNALS = 30  # about 1.8 MB: fills the TCP buffers, stays under the 2 MB outbox
 FROZEN_PAYLOAD = 60_000
 SMALL_RECEIVE_BUFFER = 16_384
+DRIP_PACE = 0.02  # at most 50 frames a second: under the raw rate of 64
+DRIP_FRAMES = 4 * MESSAGE_FRAMES_MAX  # what a regression lets through uncut
+DRIP_SLACK = 10  # frames the client may write before it notices the abort
+FRAGMENT = 10_000
 
 
 def masked(opcode: int, payload: bytes, *, fin: bool = True) -> bytes:
@@ -87,6 +93,71 @@ async def test_one_byte_fragment_flood_is_cut(server: RunningServer) -> None:
     assert await flooder.close_code() is None
     await other.ping()
     await other.close()
+
+
+async def drip_until_cut(client: Client, frames: list[bytes]) -> int:
+    """Write `frames` one at a time at DRIP_PACE until the server drops the connection;
+    how many were written."""
+    written = 0
+    for wire in frames:
+        if client.ws.transport.is_closing():
+            break
+        client.ws.transport.write(wire)
+        written += 1
+        await asyncio.sleep(DRIP_PACE)
+    return written
+
+
+async def test_slow_fragment_drip_is_cut_at_the_message_frame_cap(server: RunningServer) -> None:
+    """One message kept open by continuation frames under the raw rate: cut at its 65th frame,
+    far below the raw budget of 1024 frames, without a close frame."""
+    dripper = await Client.connect(server, forwarded_for="203.0.113.47", compression=False)
+    other = await Client.connect(server, forwarded_for="203.0.113.48")
+    first = masked(0x1, b"{", fin=False)
+    rest = [masked(0x0, b" ", fin=False) for _ in range(DRIP_FRAMES - 1)]
+    dripping = asyncio.create_task(drip_until_cut(dripper, [first, *rest]))
+    try:
+        latencies = await pong_latencies_while(other, dripping)
+        written = await dripping
+    finally:
+        dripping.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await dripping
+    assert MESSAGE_FRAMES_MAX < written <= MESSAGE_FRAMES_MAX + DRIP_SLACK, written
+    assert latencies
+    assert max(latencies) < PONG_BOUND, f"pong took {max(latencies):.3f} s"
+    assert await dripper.close_code() is None  # aborted, no close frame
+    await other.ping()
+    await other.close()
+
+
+async def test_messages_in_fragments_reach_the_app(server: RunningServer) -> None:
+    """A signal in a few fragments reaches the addressee; a ping in 64 frames gets its pong."""
+    sender = await Client.connect(server, forwarded_for="203.0.113.49", compression=False)
+    receiver = await Client.connect(server, forwarded_for="203.0.113.50")
+    joined = await sender.create("Отправитель-фрагменты")
+    receiver_id = (await receiver.join(joined["roomId"], "Получатель-фрагменты"))["selfId"]
+    await sender.expect("peer-joined")
+    label = marker("фрагменты")
+    server.sensitive.add(label)
+    data = {"description": {"type": "offer", "sdp": "v=0 " * FRAGMENT + label}}
+    text = json.dumps({"type": "signal", "to": receiver_id, "data": data}, ensure_ascii=False)
+    parts = [text[i : i + FRAGMENT] for i in range(0, len(text), FRAGMENT)]
+    assert 3 <= len(parts) <= 5
+    # websockets sends an iterable as one message: a frame per item, then an empty last one.
+    await sender.ws.send(parts)
+    assert (await receiver.expect("signal"))["data"] == data
+
+    padded = '{"type":"ping"' + " " * (MESSAGE_FRAMES_MAX - 15) + "}"
+    last = len(padded) - 1
+    sender.ws.transport.write(  # exactly 64 frames of one character
+        b"".join(
+            masked(0x0 if i else 0x1, char.encode(), fin=i == last) for i, char in enumerate(padded)
+        )
+    )
+    await sender.expect("pong")
+    for client in (sender, receiver):
+        await client.close()
 
 
 async def test_traffic_at_the_application_limits_is_cut_by_the_application(

@@ -5,7 +5,8 @@ protocol of uvicorn, this class:
 
 - counts the raw bytes and frames of every read before they are parsed (app/frames.py) and
   aborts the transport over budget: uvicorn answers PING itself and joins fragments itself, so
-  the application's per-message limits never see them;
+  the application's per-message limits never see them. A message in more than
+  MESSAGE_FRAMES_MAX frames is aborted the same way: uvicorn would hold every fragment;
 - writes no PONG while the transport's write buffer is above PONG_BUFFER_LIMIT: a client that
   pings but does not read cannot grow the buffer with replies;
 - aborts the transport when the keepalive ping gets no answer: uvicorn calls close(), which

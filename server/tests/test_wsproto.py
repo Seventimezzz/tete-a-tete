@@ -15,7 +15,7 @@ from uvicorn.protocols.websockets.websockets_sansio_impl import WebSocketsSansIO
 from uvicorn.server import ServerState
 
 from app import wsproto
-from app.frames import RAW_FRAMES_BURST, RAW_FRAMES_RATE
+from app.frames import MESSAGE_FRAMES_MAX, RAW_FRAMES_BURST, RAW_FRAMES_RATE
 from app.ws import ABORT_EXTENSION
 from app.wsproto import PONG_BUFFER_LIMIT, UVICORN_VERSION, TeteWebSocketProtocol
 from tests.fakes import FakeClock
@@ -152,6 +152,62 @@ async def test_messages_reach_the_app() -> None:
         while not app.received:  # noqa: ASYNC110 - state of a plain object
             await asyncio.sleep(0)
     assert app.received == [{"type": "websocket.receive", "text": '{"type":"ping"}'}]
+    assert transport.aborted == 0
+
+
+PADDED_PING = '{"type":"ping"' + " " * (MESSAGE_FRAMES_MAX - 15) + "}"
+
+
+def in_frames(text: str, frames: int, *, between: bytes = b"") -> bytes:
+    """`text` as one message of `frames` frames (one character each but the last)."""
+    data = text.encode()
+    chunks = [data[i : i + 1] for i in range(frames - 1)] + [data[frames - 1 :]]
+    wire = [frame(0x1 if i == 0 else 0x0, c, fin=i == frames - 1) for i, c in enumerate(chunks)]
+    return between.join(wire)
+
+
+async def received(app: App, count: int) -> None:
+    async with asyncio.timeout(1.0):
+        while len(app.received) < count:  # noqa: ASYNC110 - state of a plain object
+            await asyncio.sleep(0)
+
+
+@pytest.mark.usefixtures("clock")
+async def test_a_message_in_64_frames_reaches_the_app() -> None:
+    protocol, transport, app = await connect()
+    protocol.data_received(in_frames(PADDED_PING, MESSAGE_FRAMES_MAX))
+    await received(app, 1)
+    assert app.received == [{"type": "websocket.receive", "text": PADDED_PING}]
+    assert transport.aborted == 0
+
+
+@pytest.mark.usefixtures("clock")
+async def test_a_message_in_65_frames_aborts_before_the_app_sees_it() -> None:
+    protocol, transport, app = await connect()
+    wire = in_frames(PADDED_PING + " ", MESSAGE_FRAMES_MAX + 1)
+    for at in range(0, len(wire), 7):  # a drip of small reads
+        protocol.data_received(wire[at : at + 7])
+    assert transport.aborted == 1
+    assert transport.written == b""  # no close frame
+    await asyncio.wait_for(app.done.wait(), 1.0)
+    assert [m["type"] for m in app.received] == ["websocket.disconnect"]
+
+
+@pytest.mark.usefixtures("clock")
+async def test_pings_inside_a_message_are_answered_and_do_not_count() -> None:
+    protocol, transport, app = await connect()
+    protocol.data_received(in_frames(PADDED_PING, MESSAGE_FRAMES_MAX, between=PING))
+    await received(app, 1)
+    assert app.received == [{"type": "websocket.receive", "text": PADDED_PING}]
+    assert transport.written.count(b"\x8a\x00") == MESSAGE_FRAMES_MAX - 1
+    assert transport.aborted == 0
+
+
+@pytest.mark.usefixtures("clock")
+async def test_each_message_gets_its_own_64_frames() -> None:
+    protocol, transport, app = await connect()
+    protocol.data_received(in_frames(PADDED_PING, MESSAGE_FRAMES_MAX) * 2)
+    await received(app, 2)
     assert transport.aborted == 0
 
 

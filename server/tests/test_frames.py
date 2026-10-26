@@ -6,6 +6,7 @@ import struct
 import pytest
 
 from app.frames import (
+    MESSAGE_FRAMES_MAX,
     RAW_BYTES_BURST,
     RAW_BYTES_RATE,
     RAW_FRAMES_BURST,
@@ -79,6 +80,88 @@ def test_stops_counting_past_the_limit() -> None:
     assert counter.feed(REQUEST + pings, limit=5) == 6
 
 
+# --- frames of one fragmented message are capped at MESSAGE_FRAMES_MAX
+
+
+def fragmented(frames: int, *, between: bytes = b"") -> bytes:
+    """One text message in `frames` frames: TEXT without FIN, continuations, the last with FIN.
+    `between` (control frames) goes after every data frame but the last."""
+    if frames == 1:
+        return frame(0x1, b"a")
+    parts = [frame(0x1, b"a", fin=False) + between]
+    parts += [frame(0x0, b"b", fin=False) + between for _ in range(frames - 2)]
+    parts.append(frame(0x0, b"c"))
+    return b"".join(parts)
+
+
+def test_message_frames_max_is_64() -> None:
+    assert MESSAGE_FRAMES_MAX == 64
+
+
+def test_a_message_of_64_frames_passes() -> None:
+    counter = FrameCounter()
+    assert counter.feed(REQUEST + fragmented(MESSAGE_FRAMES_MAX), limit=1000) == 64
+    assert not counter.too_fragmented
+
+
+def test_the_65th_frame_of_a_message_is_refused() -> None:
+    counter = FrameCounter()
+    counter.feed(REQUEST + fragmented(MESSAGE_FRAMES_MAX + 1), limit=1000)
+    assert counter.too_fragmented
+
+
+def test_an_unfinished_message_is_refused_at_its_65th_frame() -> None:
+    counter = FrameCounter()
+    head = REQUEST + frame(0x1, b"a", fin=False) + frame(0x0, b"b", fin=False) * 62
+    counter.feed(head, limit=1000)
+    assert not counter.too_fragmented
+    counter.feed(frame(0x0, b"b", fin=False), limit=1000)  # the 64th
+    assert not counter.too_fragmented
+    counter.feed(frame(0x0, b"b", fin=False), limit=1000)  # the 65th
+    assert counter.too_fragmented
+
+
+@pytest.mark.parametrize("size", [1, 2, 3, 7, 4096])
+def test_the_cap_holds_whatever_the_chunks(size: int) -> None:
+    for frames, refused in ((MESSAGE_FRAMES_MAX, False), (MESSAGE_FRAMES_MAX + 1, True)):
+        data = REQUEST + fragmented(frames)
+        counter = FrameCounter()
+        for i in range(0, len(data), size):
+            counter.feed(data[i : i + size], limit=1000)
+        assert counter.too_fragmented is refused
+
+
+def test_control_frames_inside_a_message_do_not_count() -> None:
+    counter = FrameCounter()
+    controls = frame(0x9, b"") + frame(0xA, b"") + frame(0x9, b"x")
+    data = REQUEST + fragmented(MESSAGE_FRAMES_MAX, between=controls)
+    assert counter.feed(data, limit=10_000) == MESSAGE_FRAMES_MAX * 4 - 3
+    assert not counter.too_fragmented
+
+
+def test_control_frames_inside_a_message_do_not_reset_the_count() -> None:
+    """A control frame carries FIN: it must not end the message it interrupts."""
+    counter = FrameCounter()
+    counter.feed(REQUEST + fragmented(MESSAGE_FRAMES_MAX + 1, between=frame(0x9, b"")), 10_000)
+    assert counter.too_fragmented
+
+
+def test_a_fin_resets_the_count() -> None:
+    counter = FrameCounter()
+    messages = fragmented(MESSAGE_FRAMES_MAX) * 3 + frame(0x1, b"x") * 200 + frame(0x2, b"y")
+    counter.feed(REQUEST + messages + fragmented(MESSAGE_FRAMES_MAX), limit=10_000)
+    assert not counter.too_fragmented
+
+
+def test_budget_refuses_a_too_fragmented_message() -> None:
+    budget = make_budget()
+    assert budget.admit(REQUEST, 0.0)
+    assert budget.admit(fragmented(MESSAGE_FRAMES_MAX), 0.0)
+    assert budget.admit(frame(0x1, b"a", fin=False), 0.0)
+    assert budget.admit(frame(0x0, b"b", fin=False) * (MESSAGE_FRAMES_MAX - 1), 0.0)
+    assert not budget.admit(frame(0x0, b"c"), 0.0)  # the 65th, though it ends the message
+
+
 def make_budget() -> RawBudget:
     return RawBudget(now=0.0)
 
@@ -114,10 +197,12 @@ def test_budget_refuses_a_frame_flood() -> None:
 
 
 def test_budget_refuses_a_one_byte_fragment_flood() -> None:
+    """Messages of 1-byte fragments, each within the per-message cap: the frame budget cuts."""
     budget = make_budget()
-    assert budget.admit(REQUEST + frame(0x1, b"a", fin=False), 0.0)
-    fragments = frame(0x0, b"b", fin=False) * 2_000
-    assert not budget.admit(fragments, 0.1)
+    assert budget.admit(REQUEST, 0.0)
+    flood = fragmented(MESSAGE_FRAMES_MAX) * (RAW_FRAMES_BURST // MESSAGE_FRAMES_MAX + 1)
+    assert not budget.admit(flood, 0.1)
+    assert not budget._counter.too_fragmented
 
 
 def test_budget_refuses_bytes_over_the_burst() -> None:
