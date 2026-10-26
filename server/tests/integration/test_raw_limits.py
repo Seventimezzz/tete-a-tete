@@ -38,7 +38,8 @@ FROZEN_PAYLOAD = 60_000
 SMALL_RECEIVE_BUFFER = 16_384
 DRIP_PACE = 0.02  # at most 50 frames a second: under the raw rate of 64
 DRIP_FRAMES = 4 * MESSAGE_FRAMES_MAX  # what a regression lets through uncut
-DRIP_SLACK = 10  # frames the client may write before it notices the abort
+DRIP_SLACK = 50  # frames the client may write before it notices the abort: 1 s at DRIP_PACE
+
 FRAGMENT = 10_000
 
 
