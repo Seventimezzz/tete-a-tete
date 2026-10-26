@@ -68,6 +68,14 @@ _UVICORN_FLAGS: Final = (
 )
 
 
+async def stop_task(task: "asyncio.Task[Any]") -> None:
+    """Cancel a helper task and wait until it ends, so that a failed or timed-out test leaves
+    nothing running. Its result or error is taken here, so none is reported as unretrieved:
+    a test that needs it awaits the task itself first."""
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
 def marker(label: str) -> str:
     """A unique string for signal data: the server output must never show it."""
     return f"маркер-{label}-{secrets.token_hex(4)}"

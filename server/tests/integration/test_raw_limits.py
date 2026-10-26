@@ -2,7 +2,6 @@
 fragments are counted, a frozen client is dropped after the keepalive timeout."""
 
 import asyncio
-import contextlib
 import json
 import os
 import struct
@@ -12,7 +11,14 @@ import pytest
 
 from app.frames import MESSAGE_FRAMES_MAX
 from tests.integration.conftest import assert_clean_log
-from tests.integration.harness import RAISED_LIMITS, TEST_SECRET, Client, RunningServer, marker
+from tests.integration.harness import (
+    RAISED_LIMITS,
+    TEST_SECRET,
+    Client,
+    RunningServer,
+    marker,
+    stop_task,
+)
 from tests.integration.harness import start_server as start_uvicorn
 from tests.integration.test_qa_frames_and_logs import _server_side_states
 from tests.integration.test_qa_lifecycle import QA_FACTORY, SWEEP_TICK_BOUND, ServerClock
@@ -72,8 +78,12 @@ async def test_ping_flood_is_cut_and_others_keep_their_pongs(server: RunningServ
     await other.create("Другая-комната")
     ping = masked(0x9, b"")
     flooding = asyncio.create_task(flood_until_cut(flooder, b"", ping * BATCH))
-    latencies = await pong_latencies_while(other, flooding)
-    assert await flooding < CUT_BOUND
+    try:
+        latencies = await pong_latencies_while(other, flooding)
+        took = await flooding
+    finally:
+        await stop_task(flooding)
+    assert took < CUT_BOUND
     assert latencies
     assert max(latencies) < PONG_BOUND, f"pong took {max(latencies):.3f} s"
     assert await flooder.close_code() is None  # aborted, no close frame
@@ -87,8 +97,12 @@ async def test_one_byte_fragment_flood_is_cut(server: RunningServer) -> None:
     first = masked(0x1, b"{", fin=False)
     fragments = masked(0x0, b" ", fin=False) * BATCH
     flooding = asyncio.create_task(flood_until_cut(flooder, first, fragments))
-    latencies = await pong_latencies_while(other, flooding)
-    assert await flooding < CUT_BOUND
+    try:
+        latencies = await pong_latencies_while(other, flooding)
+        took = await flooding
+    finally:
+        await stop_task(flooding)
+    assert took < CUT_BOUND
     assert max(latencies) < PONG_BOUND, f"pong took {max(latencies):.3f} s"
     assert await flooder.close_code() is None
     await other.ping()
@@ -120,9 +134,7 @@ async def test_slow_fragment_drip_is_cut_at_the_message_frame_cap(server: Runnin
         latencies = await pong_latencies_while(other, dripping)
         written = await dripping
     finally:
-        dripping.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await dripping
+        await stop_task(dripping)
     assert MESSAGE_FRAMES_MAX < written <= MESSAGE_FRAMES_MAX + DRIP_SLACK, written
     assert latencies
     assert max(latencies) < PONG_BOUND, f"pong took {max(latencies):.3f} s"
@@ -230,6 +242,9 @@ async def _frozen_client_scenario(server: RunningServer) -> None:
     left = await sender.expect("peer-left", SWEEP_TICK_BOUND)
     assert left == {"type": "peer-left", "id": frozen_id}
     frozen.resume_reading()
+    # Aborted, so no close frame. uvicorn's own keepalive_timeout sent 1011 and called close():
+    # where the kernel takes the whole buffer (Linux), the checks above pass with it too.
+    assert await frozen.close_code(timeout=10.0) is None
     for client in (sender, frozen):
         await client.close()
     await clock.close()

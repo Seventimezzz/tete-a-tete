@@ -16,6 +16,7 @@ from tests.integration.harness import (
     ServerExitError,
     marker,
     start_server,
+    stop_task,
 )
 
 pytestmark = pytest.mark.integration
@@ -131,10 +132,14 @@ async def test_message_flood_closed_1008_others_still_fast(server: RunningServer
                 await asyncio.sleep(0)
 
     latencies = []
-    async with asyncio.timeout(FLOOD_BOUND):  # a regression fails here instead of hanging
-        flooding = asyncio.create_task(flood())
-        while not flooding.done():
-            latencies.append(await other.ping())
+    flooding = asyncio.create_task(flood())
+    try:
+        async with asyncio.timeout(FLOOD_BOUND):  # a regression fails here instead of hanging
+            while not flooding.done():
+                latencies.append(await other.ping())
+            await flooding
+    finally:
+        await stop_task(flooding)
     assert await flooder.close_code() == 1008
     assert latencies
     # Wall clock on a shared CI runner: starving the event loop would take seconds.

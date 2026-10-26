@@ -288,9 +288,14 @@ def parse_client_message(raw: str | bytes) -> ClientMessage:
 
 
 def _keep_raw_data(message: ClientSignal, raw: str | bytes) -> bool:
-    """Keep the text of `data` for forwarding. False if the forwarded signal would be longer
-    than a frame of MAX_MESSAGE_BYTES gives: only if the text could not be kept and re-serializing
-    grew it, or the frame itself was over the limit."""
+    """Keep the text of `data` for forwarding; False means bad-request. False when:
+
+    - the kept text repeats a key in one object, holds NaN, Infinity or a number that
+      overflows to them, or nests deeper than MAX_SIGNAL_DATA_DEPTH (_forwardable_data): the
+      model reads only the last of duplicate keys, so a duplicate could hide these from it;
+    - the forwarded signal would be longer than a frame of MAX_MESSAGE_BYTES gives: only if
+      the text could not be kept and re-serializing grew it, or the frame itself was over.
+    """
     message._raw_data = _raw_member(raw if isinstance(raw, str) else raw.decode(), "data")
     if message._raw_data is not None and not _forwardable_data(message._raw_data):
         return False
