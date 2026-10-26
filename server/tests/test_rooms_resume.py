@@ -683,9 +683,10 @@ def test_queued_signal_from_a_waiting_sender_is_kept() -> None:
     assert [m["from"] for m in b2.of_type("signal")] == [a_id]
 
 
-# --- `left` is bounded; an id that fell out of it never gets a place back (L4)
+# --- `left` is bounded; once an id fell out of it, unknown ids join as newcomers (L4)
 
 MANY_JOINS = LimitConfig(joins_per_window=1_000_000)
+NEVER_SEEN = "abcdefgh"
 
 
 def _churn(env: Env, conn: FakeConn, times: int) -> list[str]:
@@ -724,34 +725,75 @@ def test_evicted_id_returns_as_a_newcomer_not_with_its_old_id() -> None:
     assert self_id(back) != first_id
 
 
-def test_new_ids_never_repeat_an_evicted_id(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_first_eviction_sets_the_flag() -> None:
     env = make_env(MANY_JOINS)
-    keeper, first = env.open(), env.open()
+    keeper = env.open()
     join(env, keeper)
-    join(env, first)
-    first_id, first_token = self_id(first), token(first)
-    env.hub.handle(first, ClientLeave(type="leave"))
-    _churn(env, env.open(), LEFT_MAX)
-    real = new_peer_id
-    offered = [first_id, first_id]  # the generator draws the evicted id twice
-    monkeypatch.setattr(rooms_module, "new_peer_id", lambda: offered.pop() if offered else real())
+    churner = env.open()
+    _churn(env, churner, LEFT_MAX)
+    room = env.hub._rooms[ROOM]
+    assert room.had_evictions is False
+    _churn(env, churner, 1)
+    assert room.had_evictions is True
+    assert len(room.left) == LEFT_MAX
+
+
+def test_unknown_id_in_a_room_with_evictions_joins_as_a_newcomer() -> None:
+    """Once ids fell out of `left`, the room cannot tell them from ids it never saw."""
+    env = make_env(MANY_JOINS)
+    keeper = env.open()
+    join(env, keeper)
+    _churn(env, env.open(), LEFT_MAX + 1)
+    back = env.open()
+    join(env, back, token=issue_token(SECRET, ROOM, NEVER_SEEN))
+    assert joined(back)["resumed"] is False
+    assert self_id(back) != NEVER_SEEN
+
+
+def test_new_ids_avoid_peers_and_left(monkeypatch: pytest.MonkeyPatch) -> None:
+    env = make_env(MANY_JOINS)
+    keeper = env.open()
+    join(env, keeper)
+    gone = _churn(env, env.open(), 3)
+    fresh = new_peer_id()
+    offered = [fresh, gone[0], self_id(keeper), gone[-1]]  # drawn from the end
+    monkeypatch.setattr(rooms_module, "new_peer_id", offered.pop)
     newcomer = env.open()
     join(env, newcomer)
     assert offered == []
-    assert self_id(newcomer) != first_id
-    # The token of the evicted id cannot take the newcomer's place either.
-    back = env.open()
-    join(env, back, token=first_token)
-    assert self_id(back) not in {first_id, self_id(newcomer)}
-    assert newcomer.closed is None
+    assert self_id(newcomer) == fresh
+    assert keeper.closed is None
+
+
+def test_new_id_generation_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A generator that only draws taken ids gives up with room-full instead of looping."""
+    env = make_env(MANY_JOINS)
+    keeper = env.open()
+    join(env, keeper)
+    draws = []
+
+    def taken() -> str:
+        draws.append(1)
+        return self_id(keeper)
+
+    monkeypatch.setattr(rooms_module, "new_peer_id", taken)
+    newcomer = env.open()
+    join(env, newcomer)
+    assert newcomer.of_type("error") == [{"type": "error", "code": "room-full"}]
+    assert 1 < len(draws) <= 64
+    assert keeper.closed is None
 
 
 def test_room_without_evictions_still_restores_unknown_ids() -> None:
     """After a restart the room is new: a token id it never saw gets its place back."""
-    env = make_env()
+    env = make_env(MANY_JOINS)
     a = env.open()
-    join(env, a, token=issue_token(SECRET, ROOM, "abcdefgh"))
-    assert (joined(a)["resumed"], self_id(a)) == (True, "abcdefgh")
+    join(env, a, token=issue_token(SECRET, ROOM, NEVER_SEEN))
+    assert (joined(a)["resumed"], self_id(a)) == (True, NEVER_SEEN)
+    _churn(env, env.open(), LEFT_MAX)  # `left` full, nothing pushed out yet
+    b = env.open()
+    join(env, b, token=issue_token(SECRET, ROOM, "bcdefghj"))
+    assert (joined(b)["resumed"], self_id(b)) == (True, "bcdefghj")
 
 
 def test_room_and_peer_repr_hold_no_ids_or_names() -> None:

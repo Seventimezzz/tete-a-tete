@@ -4,8 +4,6 @@ Nothing here logs. Reprs of Hub, Room and Peer hold counts and times only: no ro
 ids, names, signal data or tokens.
 """
 
-import hashlib
-import secrets
 from dataclasses import dataclass, field
 from typing import Final, Protocol
 
@@ -42,10 +40,11 @@ WAIT_SECONDS: Final = 15.0
 WAIT_QUEUE_MAX: Final = 50
 WAIT_QUEUE_BYTES: Final = 262_144
 WAIT_QUEUE_PER_SENDER: Final = 25
-# Freed ids a room remembers exactly; older ones go to a bitmap that only grows.
+# Freed ids a room remembers; the oldest is pushed out beyond this.
 LEFT_MAX: Final = 1000
-_EVICTED_BITS: Final = 1 << 16
-# Draws of a new peer id before giving up (only a room with a saturated bitmap gets there).
+# Draws of a new peer id before giving up with room-full. A draw hits `peers` or `left` (at
+# most 1005 of 32^8 ids) with a chance under 1e-9, so giving up does not happen in practice;
+# the bound only guarantees the loop ends.
 _NEW_ID_TRIES: Final = 64
 
 
@@ -81,39 +80,27 @@ class Peer:
 class Room:
     id: str
     peers: dict[str, Peer] = field(default_factory=dict)
-    # Freed places, oldest first: a return gets resumed=False. At most LEFT_MAX; an id pushed
-    # out is marked in `_evicted` and is still treated as freed (maybe also a few never-seen
-    # ids, which then join as newcomers too). A new peer id is never one marked there.
+    # Freed places, oldest first: a return gets resumed=False. At most LEFT_MAX: the oldest is
+    # pushed out, and from then on `had_evictions` is set and every id the room does not know
+    # counts as freed, so a pushed-out id never gets its place back.
     left: dict[str, None] = field(default_factory=dict)
-    _evicted: bytearray | None = None
-    _salt: bytes = field(default_factory=lambda: secrets.token_bytes(16))
+    had_evictions: bool = False
 
     def __repr__(self) -> str:
         return f"Room(peers={len(self.peers)}, left={len(self.left)})"
 
     def free(self, peer_id: str) -> None:
-        """Remember a freed place; the oldest one beyond LEFT_MAX goes to the bitmap."""
+        """Remember a freed place; beyond LEFT_MAX the oldest is forgotten."""
         self.left[peer_id] = None
         if len(self.left) > LEFT_MAX:
-            oldest = next(iter(self.left))
-            del self.left[oldest]
-            if self._evicted is None:
-                self._evicted = bytearray(_EVICTED_BITS // 8)
-            bit = self._bit(oldest)
-            self._evicted[bit // 8] |= 1 << (bit % 8)
+            del self.left[next(iter(self.left))]
+            self.had_evictions = True
 
     def freed(self, peer_id: str) -> bool:
-        """The place was freed: the id is in `left` or (maybe) pushed out of it."""
-        if peer_id in self.left:
-            return True
-        if self._evicted is None:
-            return False
-        bit = self._bit(peer_id)
-        return bool(self._evicted[bit // 8] & (1 << (bit % 8)))
-
-    def _bit(self, peer_id: str) -> int:
-        digest = hashlib.blake2b(peer_id.encode(), digest_size=4, key=self._salt).digest()
-        return int.from_bytes(digest) % _EVICTED_BITS
+        """The place of an id not in `peers` was freed: the id is in `left`, or the room has
+        forgotten ids and cannot tell this one from them. Otherwise the room never saw it:
+        it was recreated after a restart."""
+        return peer_id in self.left or self.had_evictions
 
 
 @dataclass(frozen=True)
@@ -293,10 +280,12 @@ class Hub:
         self._send_joined(conn, room, peer, resumed=resumed)
 
     def _new_peer_id(self, room: Room) -> str | None:
-        """An id that is not in the room and was never freed in it, or None."""
+        """An id in neither `peers` nor `left` of the room, or None. An id forgotten from
+        `left` may come again, 2^-40 per draw and forgotten id: the risk already taken for a
+        room recreated after a restart."""
         for _ in range(_NEW_ID_TRIES):
             peer_id = new_peer_id()
-            if peer_id not in room.peers and not room.freed(peer_id):
+            if peer_id not in room.peers and peer_id not in room.left:
                 return peer_id
         return None
 
