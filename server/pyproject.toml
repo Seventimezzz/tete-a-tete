@@ -5,7 +5,7 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     "fastapi>=0.156.7",
     "pydantic>=2",
-    "uvicorn[standard]>=0.54.0",
+    "uvicorn[standard]==0.54.0",  # exact: app/wsproto.py subclasses its internals
 ]
 
 [tool.uv]
@@ -20,6 +20,7 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "PT", "RUF", "S", "AS
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "TID251"]
+"app/clock.py" = ["TID251"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "time.time".msg = "Время — только из подменяемых часов (CLAUDE.md, правила кода сервера)"
@@ -51,6 +52,7 @@ xfail_strict = true
 filterwarnings = ["error"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = ["integration: real uvicorn in a separate process (tests/integration)"]
 
 [dependency-groups]
 dev = [
@@ -59,4 +61,5 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.17.1",
+    "websockets>=17.3",
 ]

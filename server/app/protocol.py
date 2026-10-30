@@ -1,5 +1,6 @@
 """Signaling protocol: the source of truth for protocol/schema.json and the client."""
 
+import json
 import math
 import re
 import secrets
@@ -11,6 +12,7 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    PrivateAttr,
     TypeAdapter,
     ValidationError,
 )
@@ -24,9 +26,18 @@ NAME_MAX_LENGTH: Final = 32
 RESUME_TOKEN_MAX_LENGTH: Final = 128
 PAIR_MS_MAX: Final = 3_600_000
 PAIR_RESTARTS_MAX: Final = 100
+# The largest incoming message (--ws-max-size). A forwarded signal is its frame with "to"
+# renamed "from", so the server sends at most SIGNAL_FORWARD_GROWTH bytes more.
+MAX_MESSAGE_BYTES: Final = 65_536
+SIGNAL_FORWARD_GROWTH: Final = len('"from"') - len('"to"')
 # `data` of a signal: the object itself is depth 1, each nested object or array adds 1.
-# Deeper data parses but cannot be serialized back for forwarding (about 98 levels).
-MAX_SIGNAL_DATA_DEPTH: Final = 32
+# Real data is two levels deep ({description: {type, sdp}}, {candidate: {...}},
+# {relayTrack: {mid, from}}); eight leaves room for growth and keeps the walk cheap.
+MAX_SIGNAL_DATA_DEPTH: Final = 8
+# WebSocket close codes; they are not part of the JSON schema.
+CLOSE_REPLACED: Final = 4000  # the seat was taken by a new join
+CLOSE_SLOW_READER: Final = 4001  # the outgoing queue overflowed
+CLOSE_RATE_LIMIT: Final = 1008  # rate limit exceeded
 _DATA_TOO_DEEP: Final = "signal data is nested too deeply"
 
 
@@ -60,7 +71,7 @@ type NatType = Literal["open", "cone", "symmetric", "no-udp"]
 type CandidateType = Literal["host", "srflx", "prflx", "upnp"]
 type PairResult = Literal["direct", "failed"]
 type IpFamily = Literal["ipv4", "ipv6"]
-type ErrorCode = Literal["room-full", "bad-request"]
+type ErrorCode = Literal["room-full", "bad-request", "rate-limited"]
 
 
 def _require_type(schema: dict[str, Any]) -> None:
@@ -130,20 +141,20 @@ class Route(_ClientModel):
 
 class PeerInfo(_ServerModel):
     id: PeerId
-    name: Name
+    name: Name = Field(repr=False)
     muted: bool
 
 
 class ClientCreate(_ClientModel):
     type: Literal["create"]
-    name: Name
+    name: Name = Field(repr=False)
     net: NetInfo
 
 
 class ClientJoin(_ClientModel):
     type: Literal["join"]
     room_id: RoomId = Field(repr=False)
-    name: Name
+    name: Name = Field(repr=False)
     net: NetInfo
     resume_token: ResumeToken | None = Field(default=None, repr=False)
 
@@ -152,6 +163,8 @@ class ClientSignal(_ClientModel):
     type: Literal["signal"]
     to: PeerId
     data: _SignalData = Field(repr=False)
+    # JSON text of `data` exactly as it came in the frame; set by parse_client_message.
+    _raw_data: str | None = PrivateAttr(default=None)
 
 
 class ClientMute(_ClientModel):
@@ -190,7 +203,7 @@ class ServerJoined(_ServerModel):
 class ServerPeerJoined(_ServerModel):
     type: Literal["peer-joined"] = "peer-joined"
     id: PeerId
-    name: Name
+    name: Name = Field(repr=False)
 
 
 class ServerPeerLeft(_ServerModel):
@@ -264,11 +277,116 @@ class BadRequestError(Exception):
 
 def parse_client_message(raw: str | bytes) -> ClientMessage:
     try:
-        return client_message_adapter.validate_json(raw)
+        message = client_message_adapter.validate_json(raw)
     except ValidationError:
         pass
+    else:
+        if not isinstance(message, ClientSignal) or _keep_raw_data(message, raw):
+            return message
     # Raised after the block: else the ValidationError (holds the input, SDP) stays in __context__.
     raise BadRequestError
+
+
+def _keep_raw_data(message: ClientSignal, raw: str | bytes) -> bool:
+    """Keep the text of `data` for forwarding; False means bad-request. False when:
+
+    - the kept text repeats a key in one object, holds NaN, Infinity or a number that
+      overflows to them, or nests deeper than MAX_SIGNAL_DATA_DEPTH (_forwardable_data): the
+      model reads only the last of duplicate keys, so a duplicate could hide these from it;
+    - the forwarded signal would be longer than a frame of MAX_MESSAGE_BYTES gives: only if
+      the text could not be kept and re-serializing grew it, or the frame itself was over.
+    """
+    message._raw_data = _raw_member(raw if isinstance(raw, str) else raw.decode(), "data")
+    if message._raw_data is not None and not _forwardable_data(message._raw_data):
+        return False
+    forwarded = dump_forwarded_signal(ID_ALPHABET[0] * PEER_ID_LENGTH, message)
+    return len(forwarded.encode()) <= MAX_MESSAGE_BYTES + SIGNAL_FORWARD_GROWTH
+
+
+class _DuplicateKeyError(ValueError):
+    """`data` repeats a key in one object. Carries no input."""
+
+
+class _NonFiniteError(ValueError):
+    """`data` holds NaN, Infinity or -Infinity. Carries no input."""
+
+
+def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = dict(pairs)
+    if len(result) != len(pairs):
+        raise _DuplicateKeyError
+    return result
+
+
+def _reject_constant(_: str) -> Any:
+    raise _NonFiniteError
+
+
+def _forwardable_data(raw_data: str) -> bool:
+    """The text that will be forwarded passes the checks the model ran on its own reading.
+
+    The model keeps only the last of duplicate keys, but the raw text carries all of them: a
+    duplicate could hide deep nesting or NaN from the model. Re-parse the text strictly
+    (no duplicate keys, no NaN or Infinity) and check depth and numbers on that.
+    """
+    try:
+        data = json.loads(
+            raw_data, object_pairs_hook=_unique_pairs, parse_constant=_reject_constant
+        )
+        _check_signal_data(data)
+    except (ValueError, RecursionError):
+        return False
+    return True
+
+
+_JSON_SPACE: Final = re.compile(r"[ \t\n\r]*")
+_json_decoder: Final = json.JSONDecoder()
+
+
+def _skip_space(text: str, at: int) -> int:
+    match = _JSON_SPACE.match(text, at)
+    return match.end() if match else at
+
+
+def _raw_member(text: str, name: str) -> str | None:
+    """JSON text of the last member `name` of the top-level object in `text`, or None.
+
+    The last one, as the model keeps the last of duplicate keys. Only called on text the model
+    has accepted; anything unexpected gives None, and the caller re-serializes instead.
+    """
+    found = None
+    at = _skip_space(text, 0)
+    if text[at : at + 1] != "{":
+        return None
+    at = _skip_space(text, at + 1)
+    try:
+        while text[at : at + 1] == '"':
+            key, at = _json_decoder.raw_decode(text, at)  # a string: the loop checked '"'
+            at = _skip_space(text, at)
+            if text[at : at + 1] != ":":
+                return None
+            start = _skip_space(text, at + 1)
+            _, at = _json_decoder.raw_decode(text, start)
+            if key == name:
+                found = text[start:at]
+            at = _skip_space(text, at)
+            if text[at : at + 1] == "}":
+                return found
+            if text[at : at + 1] != ",":
+                return None
+            at = _skip_space(text, at + 1)
+    except (ValueError, RecursionError):
+        return None
+    return None
+
+
+def dump_forwarded_signal(from_id: str, message: ClientSignal) -> str:
+    """The `signal` the addressee gets. `data` keeps the text it came in: re-serializing it
+    could make the message several times larger (9e15 dumps as 9000000000000000.0)."""
+    raw = message._raw_data
+    if raw is None:
+        return dump_server_message(ServerSignal(from_=from_id, data=message.data))
+    return '{"type":"signal","from":' + json.dumps(from_id) + ',"data":' + raw + "}"
 
 
 def dump_server_message(message: ServerMessage) -> str:
